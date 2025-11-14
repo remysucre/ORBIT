@@ -32,8 +32,8 @@ cursor:add()
 
 cursor.speed = 0
 cursor.thrust = 0.5
-cursor.maxSpeed = 4
-cursor.friction = 0.95
+cursor.maxSpeed = 8
+cursor.friction = 0.85
 
 function layout(orb)
 		
@@ -158,10 +158,8 @@ function playdate.update()
 	else
 		cursor.speed = cursor.speed * cursor.friction
 	end
-	
-	
+		
 	local radians = math.rad(playdate.getCrankPosition() - 90)  -- Adjust for 0° being up
-	
 	local vx = math.cos(radians) * cursor.speed
 	local vy = math.sin(radians) * cursor.speed
 
