@@ -12,6 +12,9 @@ local fnt = gfx.font.new("fonts/Asheville-Sans-14-Bold")
 gfx.setFont(fnt)
 
 local scrollAnimator = nil
+local scrollEasing = playdate.easingFunctions.outQuint
+local scrollDist = 220
+local scrollDura = 400
 
 -- viewport
 local viewportTop = 0
@@ -151,20 +154,24 @@ end
 
 function playdate.update()
 	
-	local easing = playdate.easingFunctions.outQuint
+	-- scrolling with D pad
+	local scrollTarget = nil
 	
 	if playdate.buttonJustPressed(playdate.kButtonDown) then
-		local target = math.min(pageHeight + page.tail - 240, viewportTop + 220)
-		scrollAnimator = gfx.animator.new(400, viewportTop, target, easing)
+		scrollTarget = math.min(pageHeight + page.tail - 240, viewportTop + scrollDist)
 	end
 	
 	if playdate.buttonJustPressed(playdate.kButtonLeft) then
-		local target = math.max(0, viewportTop - 200)
-		scrollAnimator = gfx.animator.new(400, viewportTop, target, easing)
+		scrollTarget = math.max(0, viewportTop - scrollDist)
+	end
+	
+	if scrollTarget then
+		scrollAnimator = gfx.animator.new(scrollDura, viewportTop, scrollTarget, scrollEasing)
 	end
 		
 	if scrollAnimator then
 		
+		-- maintain cursor position in view
 		local x, y = cursor:getPosition()
 		local viewY = y - viewportTop
 		
