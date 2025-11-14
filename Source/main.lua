@@ -150,10 +150,6 @@ function cursor:draw(x, y, width, height)
 end
 
 function playdate.update()
-
-	if playdate.getCrankChange() ~= 0 then
-		cursor:markDirty()
-	end
 	
 	if playdate.buttonJustPressed(playdate.kButtonDown) then
 		scrollAnimator = gfx.animator.new(500, 80, 0, playdate.easingFunctions.outExpo)
@@ -180,6 +176,11 @@ function playdate.update()
 		
 		cursor:moveTo(x, viewportTop + viewY)
 	end
+	
+	if playdate.getCrankChange() ~= 0 then
+		cursor:markDirty()
+	end
+
 
 	if playdate.buttonIsPressed(playdate.kButtonUp) then
 		cursor.speed = math.min(cursor.maxSpeed, cursor.speed + cursor.thrust)
