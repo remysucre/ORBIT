@@ -75,7 +75,7 @@ function layout(orb)
 	end
 	
 	
-	pageHeight = y + page.tail
+	pageHeight = y + 2 * page.padding
 	
 	local pageImage = gfx.image.new(page.width, pageHeight)
 	gfx.lockFocus(pageImage)
@@ -174,7 +174,7 @@ function playdate.update()
 		
 		local curX, curY = cursor:getPosition()
 		local toX = curX + cursor.vx
-		local toY = math.max(0, curY + cursor.vy)
+		local toY = math.min(pageHeight + page.tail, math.max(0, curY + cursor.vy))
 		
 		if toY < viewportTop then
 			gfx.setDrawOffset(0, 0 - toY)
