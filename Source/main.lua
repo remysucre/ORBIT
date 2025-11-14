@@ -42,29 +42,38 @@ function layout(orb)
 	local x = 0
 	local y = 0
 	local toDraw = {}
-	for word in string.gmatch(content, "%S+") do
-		local w, h = gfx.getTextSize(word)
-		if x + w > page.width then
-			y += h
+	
+	for _, element in ipairs(orb.content) do
+		if element.type == "plain" then
+			for word in string.gmatch(element.text, "%S+") do
+				local w, h = gfx.getTextSize(word)
+				if x + w > page.width then
+					y += h
+					x = 0
+				end
+				table.insert(toDraw, {
+					txt = word, 
+					x = x, 
+					y = y
+				})
+				x += w
+				
+				local sw = fnt:getTextWidth(" ")
+				if x + sw <= page.width then
+					table.insert(toDraw, {
+						txt = " ",
+						x = x,
+						y = y
+					})
+					x += sw
+				end
+			end
+		elseif element.type == "vspace" then
 			x = 0
-		end
-		table.insert(toDraw, {
-			txt = word, 
-			x = x, 
-			y = y
-		})
-		x += w
-		
-		local sw = fnt:getTextWidth(" ")
-		if x + sw <= page.width then
-			table.insert(toDraw, {
-				txt = " ",
-				x = x,
-				y = y
-			})
-			x += sw
+			y += element.vspace or 30
 		end
 	end
+	
 	
 	pageHeight = y + page.tail
 	
@@ -82,15 +91,40 @@ end
 
 local orb = json.decode([[
 	{
-		"content": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Pellentesque pellentesque mi at dignissim pharetra. Ut volutpat eu velit at lacinia. Vivamus scelerisque fringilla sapien, in imperdiet turpis. Integer eget metus eu purus tincidunt semper quis eu ipsum. Duis at lorem ut est bibendum facilisis. In vel varius erat. Donec vel lacus laoreet, condimentum orci vitae, tincidunt nisl. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi tempus tincidunt tellus, ut dictum velit convallis in. Nunc egestas rutrum dolor, id hendrerit nisl ullamcorper tempor.
-		
-		Vestibulum imperdiet condimentum scelerisque. Nullam efficitur placerat mi id venenatis. Nulla nibh neque, scelerisque in elit sit amet, hendrerit dignissim risus. Cras rhoncus, ligula eget sollicitudin molestie, nibh arcu mollis sapien, vel aliquet lacus mi et sem. Quisque varius diam sed dui ultrices, quis congue nunc pellentesque. Suspendisse in augue odio. Quisque porttitor erat eget feugiat aliquet. Donec consectetur lacus at felis posuere, at lacinia eros volutpat. Morbi porttitor interdum libero, vitae vehicula est varius quis. Integer vulputate eget leo nec ultrices. Fusce tempus feugiat felis. Donec ornare lacus leo, non bibendum velit vestibulum et. Nunc sed scelerisque ligula. Cras bibendum scelerisque auctor. Quisque a eros consectetur, vehicula ex eu, lobortis est.
-		
-		Nam at magna sit amet ipsum dignissim ornare. Morbi congue turpis id malesuada pharetra. Ut eget libero mauris. Donec dapibus cursus arcu quis suscipit. In interdum interdum ipsum quis feugiat. Nam rhoncus augue nisl, a euismod elit finibus vitae. Morbi ullamcorper lorem ante. Mauris eu rutrum velit. Aenean neque dui, ornare interdum quam ut, accumsan tempus libero. Orci varius natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Proin quis porta dui, nec volutpat enim. Etiam tempus quam dolor, at vehicula sapien posuere condimentum. Morbi imperdiet a nisi ac vestibulum. Phasellus dictum neque sem, et viverra purus ultricies vitae. Mauris non justo vel enim tempor finibus vitae a mauris.
-		
-		Nullam quis odio consectetur ipsum congue consectetur ac a leo. Vivamus blandit rutrum elit eu volutpat. Donec eu cursus lectus, quis feugiat augue. Pellentesque ac feugiat nulla. Suspendisse vitae dapibus felis, quis vulputate lectus. Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae; Integer non luctus ligula, sit amet aliquam turpis. Duis in leo libero.
-		
-		Sed eget luctus nisi. Vivamus ac condimentum lorem, ut volutpat turpis. Donec volutpat nibh id metus egestas dictum. Donec varius nibh at lobortis viverra. Phasellus posuere rutrum nisl maximus molestie. Suspendisse a dignissim purus, eget pellentesque turpis. Proin quis lobortis mi. Nunc blandit enim velit, vel convallis nunc dictum vel. Nunc ultricies tincidunt dui. Fusce velit elit, bibendum a nisi vel, feugiat blandit mi. Donec maximus congue ligula ac blandit. Nunc in luctus dolor. Sed sed lorem porta, placerat tellus vitae, luctus nunc. Integer tincidunt, tortor tincidunt ultrices imperdiet, enim arcu consequat eros, nec elementum eros ante et enim."
+		"content": [
+			{ 
+				"type": "plain",
+				"text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Pellentesque pellentesque mi at dignissim pharetra. Ut volutpat eu velit at lacinia. Vivamus scelerisque fringilla sapien, in imperdiet turpis. Integer eget metus eu purus tincidunt semper quis eu ipsum. Duis at lorem ut est bibendum facilisis. In vel varius erat. Donec vel lacus laoreet, condimentum orci vitae, tincidunt nisl. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi tempus tincidunt tellus, ut dictum velit convallis in. Nunc egestas rutrum dolor, id hendrerit nisl ullamcorper tempor."
+			},
+			{
+				"type": "vspace"
+			},
+			{
+				"type": "plain",
+				"text": "Vestibulum imperdiet condimentum scelerisque. Nullam efficitur placerat mi id venenatis. Nulla nibh neque, scelerisque in elit sit amet, hendrerit dignissim risus. Cras rhoncus, ligula eget sollicitudin molestie, nibh arcu mollis sapien, vel aliquet lacus mi et sem. Quisque varius diam sed dui ultrices, quis congue nunc pellentesque. Suspendisse in augue odio. Quisque porttitor erat eget feugiat aliquet. Donec consectetur lacus at felis posuere, at lacinia eros volutpat. Morbi porttitor interdum libero, vitae vehicula est varius quis. Integer vulputate eget leo nec ultrices. Fusce tempus feugiat felis. Donec ornare lacus leo, non bibendum velit vestibulum et. Nunc sed scelerisque ligula. Cras bibendum scelerisque auctor. Quisque a eros consectetur, vehicula ex eu, lobortis est."
+			},
+			{
+				"type": "vspace"
+			},
+			{
+				"type": "plain",
+				"text": "Nam at magna sit amet ipsum dignissim ornare. Morbi congue turpis id malesuada pharetra. Ut eget libero mauris. Donec dapibus cursus arcu quis suscipit. In interdum interdum ipsum quis feugiat. Nam rhoncus augue nisl, a euismod elit finibus vitae. Morbi ullamcorper lorem ante. Mauris eu rutrum velit. Aenean neque dui, ornare interdum quam ut, accumsan tempus libero. Orci varius natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Proin quis porta dui, nec volutpat enim. Etiam tempus quam dolor, at vehicula sapien posuere condimentum. Morbi imperdiet a nisi ac vestibulum. Phasellus dictum neque sem, et viverra purus ultricies vitae. Mauris non justo vel enim tempor finibus vitae a mauris."
+			},
+			{
+				"type": "vspace"
+			},
+			{
+				"type": "plain",
+				"text": "Nullam quis odio consectetur ipsum congue consectetur ac a leo. Vivamus blandit rutrum elit eu volutpat. Donec eu cursus lectus, quis feugiat augue. Pellentesque ac feugiat nulla. Suspendisse vitae dapibus felis, quis vulputate lectus. Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae; Integer non luctus ligula, sit amet aliquam turpis. Duis in leo libero."
+			},
+			{
+				"type": "vspace"
+			},
+			{
+				"type": "plain",
+				"text": "Sed eget luctus nisi. Vivamus ac condimentum lorem, ut volutpat turpis. Donec volutpat nibh id metus egestas dictum. Donec varius nibh at lobortis viverra. Phasellus posuere rutrum nisl maximus molestie. Suspendisse a dignissim purus, eget pellentesque turpis. Proin quis lobortis mi. Nunc blandit enim velit, vel convallis nunc dictum vel. Nunc ultricies tincidunt dui. Fusce velit elit, bibendum a nisi vel, feugiat blandit mi. Donec maximus congue ligula ac blandit. Nunc in luctus dolor. Sed sed lorem porta, placerat tellus vitae, luctus nunc. Integer tincidunt, tortor tincidunt ultrices imperdiet, enim arcu consequat eros, nec elementum eros ante et enim."
+			}
+			]
 	}
 	]])
 
