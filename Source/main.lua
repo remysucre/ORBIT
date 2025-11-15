@@ -158,6 +158,7 @@ function layout(orb)
 			if element.text and type(element.text) == "string" then
 				local x0 = x
 				local y0 = y
+				local lastWordEnd = x
 				for word in string.gmatch(element.text, "%S+") do
 					local w = fnt:getTextWidth(word)
 					if x + w > page.width then
@@ -172,6 +173,7 @@ function layout(orb)
 						y = y
 					})
 					x += w
+					lastWordEnd = x  -- Track position after last word (before space)
 
 					local sw = fnt:getTextWidth(" ")
 					if x + sw <= page.width then
@@ -185,11 +187,14 @@ function layout(orb)
 				end
 
 				if element.type == "link" then
+					-- Use width up to last word (excluding trailing space)
+					local linkWidth = lastWordEnd - x0
 					table.insert(links, {
 						text = element.text,
 						url = element.url or "",
 						x = x0,
-						y = y0
+						y = y0,
+						width = linkWidth
 					})
 				end
 			end
@@ -223,7 +228,7 @@ function layout(orb)
 	for _, link in ipairs(links) do
 		if link and link.text and link.url then
 			local l = gfx.sprite.new()
-			local textWidth = fnt:getTextWidth(link.text)
+			local textWidth = link.width
 			local textHeight = fnt:getHeight()
 			l:setSize(textWidth, textHeight)
 			l:setCollideRect(0, 0, textWidth, textHeight)
