@@ -51,6 +51,8 @@ local httpData = ""
 local isLoading = false
 local frameCount = 0
 local statusMessage = nil
+local accessRequested = false
+local pageRequested = false
 
 function parseURL(url)
 	local secure = string.match(url, "^https://") ~= nil
@@ -61,10 +63,7 @@ function parseURL(url)
 end
 
 function fetchPage(url)
-	print("fetchPage called: " .. url)
-
 	if isLoading then
-		print("Already loading, skipping")
 		return
 	end
 
@@ -73,32 +72,16 @@ function fetchPage(url)
 	statusMessage = "Loading..."
 
 	local host, port, secure, path = parseURL(url)
-	print("Parsed URL - host: " .. host .. ", port: " .. port .. ", path: " .. path)
 
-	-- Check network status first
-	local status = net.getStatus()
-	print("Network status: " .. status .. " (connected=" .. net.kStatusConnected .. ")")
-
-	-- if status ~= net.kStatusConnected then
-	-- 	print("Network not connected!")
-	-- 	statusMessage = "WiFi not connected!\nConnect via Settings > System > Wi-Fi"
-	-- 	isLoading = false
-	-- 	return
-	-- end
-
-	print("Creating HTTP connection...")
 	httpConn = net.http.new(host, port, secure, "ORBIT")
 
 	if not httpConn then
-		print("HTTP connection creation failed!")
 		statusMessage = "Network access denied"
 		isLoading = false
 		return
 	end
 
-	print("HTTP connection created successfully")
 	httpConn:setConnectTimeout(10)
-	-- httpConn:setTimeout(30)
 
 	httpConn:setRequestCallback(function()
 		if not httpConn then return end
@@ -107,54 +90,37 @@ function fetchPage(url)
 			local chunk = httpConn:read(bytes)
 			if chunk then
 				httpData = httpData .. chunk
-				print("Received " .. bytes .. " bytes, total: " .. #httpData)
 			end
 		end
 	end)
 
 	httpConn:setRequestCompleteCallback(function()
-		print("Request complete callback called")
 		if not httpConn then return end
 		local err = httpConn:getError()
 		if err and err ~= "Connection closed" then
-			print("HTTP Error: " .. err)
 			statusMessage = "Error: " .. err
 			isLoading = false
 			httpConn = nil
 			return
 		end
 
-		print("Download complete, parsing JSON...")
 		-- Parse JSON and layout
 		local success, result = pcall(json.decode, httpData)
-		if not success then
-			print("JSON parse error: " .. tostring(result))
+		if not success or not result or not result.content then
 			statusMessage = "Failed to load page"
 			isLoading = false
 			httpConn = nil
 			return
 		end
 
-		if not result or not result.content then
-			print("No content in result")
-			statusMessage = "Failed to load page"
-			isLoading = false
-			httpConn = nil
-			return
-		end
-
-		print("Calling layout...")
 		layout(result)
-		print("Layout complete, clearing status")
 		statusMessage = nil
 
 		isLoading = false
 		httpConn = nil
 	end)
 
-	print("Starting GET request...")
 	httpConn:get(path)
-	print("GET request initiated")
 end
 
 function layout(orb)
@@ -306,25 +272,20 @@ function cursor:draw(x, y, width, height)
 	gfx.fillRect(9, 9, 7, 7)
 end
 
-local accessRequested = false
-
 function playdate.update()
-	
-	if not accessGranted then
+
+	frameCount += 1
+
+	-- Request network access on first frame
+	if frameCount == 1 and not accessRequested then
 		net.http.requestAccess()
 		accessRequested = true
 	end
 
-	frameCount += 1
-
-	-- Load initial page after a few frames
-	-- Note: net.http.new() will trigger permission dialog on first use
-	if accessRequested then
+	-- Load initial page once after access is requested
+	if accessRequested and not pageRequested then
 		fetchPage("https://remy.wang/index.json")
-	end
-
-	if frameCount == 1 then
-		print("Update loop started")
+		pageRequested = true
 	end
 
 	-- Display status message if present
