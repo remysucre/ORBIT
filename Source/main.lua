@@ -9,11 +9,6 @@ local pageHeight = 0
 local fnt = gfx.font.new("fonts/Asheville-Sans-14-Bold")
 gfx.setFont(fnt)
 
--- links
-local links = {}
-local hoveredLink = nil
-local linkImg = gfx.image.new(8, 8, gfx.kColorBlack)
-
 -- d pad scrolling
 local scrollAnimator = nil
 local scrollEasing = playdate.easingFunctions.outQuint
@@ -31,6 +26,8 @@ page:add()
 page.padding = 10
 page.width = 400 - 2 * page.padding
 page.tail = 30
+page.linkSprites = {}
+page.hoveredLink = nil
 
 -- cursor
 local cursor = gfx.sprite.new()
@@ -48,12 +45,20 @@ cursor.maxSpeed = 8
 cursor.friction = 0.85
 
 function layout(orb)
-		
+
+	-- Remove old link sprites
+	for _, linkSprite in ipairs(page.linkSprites) do
+		linkSprite:remove()
+	end
+	page.linkSprites = {}
+	page.hoveredLink = nil
+
 	local content = orb.content
 	local x = 0
 	local y = 0
 	local h = fnt:getHeight()
 	local toDraw = {}
+	local links = {}
 	
 	for i, element in ipairs(orb.content) do
 		if element.type == "plain" or element.type == "link" then
@@ -121,9 +126,9 @@ function layout(orb)
 		l:setBounds(0, 0, l:getSize())
 		l:setCollidesWithGroups({1})
 		l.collisionResponse = gfx.sprite.kCollisionTypeOverlap
-		
+
 		local w, h = l:getSize()
-		
+
 		function l:draw(x, y, width, height)
 			-- links can only collide with the cursor
 			if #self:overlappingSprites() > 0 then
@@ -135,10 +140,13 @@ function layout(orb)
 				gfx.drawLine(0, h-2, w, h-2)
 			end
 		end
-		
+
 		l:moveTo(page.padding + link.x + w/2, page.padding + link.y + h/2)
-		
+		l.text = link.text
+		l.url = link.url
+
 		l:add()
+		table.insert(page.linkSprites, l)
 	end
 end
 
