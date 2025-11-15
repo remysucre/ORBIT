@@ -296,11 +296,11 @@ function playdate.update()
 	-- scrolling page with D pad
 	local scrollTarget = nil
 
-	if playdate.buttonJustPressed(playdate.kButtonDown) then
+	if playdate.buttonJustPressed(playdate.kButtonDown) and pageHeight > 240 then
 		scrollTarget = math.min(pageHeight + page.tail - 240, viewportTop + scrollDist)
 	end
 
-	if playdate.buttonJustPressed(playdate.kButtonLeft) then
+	if playdate.buttonJustPressed(playdate.kButtonLeft) and pageHeight > 240 then
 		scrollTarget = math.max(0, viewportTop - scrollDist)
 	end
 
