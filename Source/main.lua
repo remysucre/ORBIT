@@ -17,7 +17,14 @@ local scrollDist = 220
 local scrollDura = 400
 
 -- viewport
-local viewportTop = 0
+local viewport = {
+	top = 0
+}
+
+function viewport:moveTo(top)
+	self.top = top
+	gfx.setDrawOffset(0, -self.top)
+end
 
 local page = gfx.sprite.new()
 page:setSize(100, 100)
@@ -141,11 +148,10 @@ function layout(orb)
 
 	-- Preserve cursor's screen-relative position
 	local cursorX, cursorY = cursor:getPosition()
-	local screenY = cursorY - viewportTop
+	local screenY = cursorY - viewport.top
 
 	-- Reset viewport to top
-	viewportTop = 0
-	gfx.setDrawOffset(0, 0)
+	viewport:moveTo(0)
 
 	local content = orb.content
 	local x = 0
@@ -306,26 +312,25 @@ function playdate.update()
 	local targetTop = nil
 	
 	if downPressed then
-		targetTop = math.min(math.max(pageHeight - 240, 0), viewportTop + scrollDist)
+		targetTop = math.min(math.max(pageHeight - 240, 0), viewport.top + scrollDist)
 	end
 
 	if leftPressed then
-		targetTop = math.max(0, viewportTop - scrollDist)
+		targetTop = math.max(0, viewport.top - scrollDist)
 	end
 
 	if targetTop then
 		assert(downPressed or leftPressed, "targetTop should only be set once right after button presses")
-		scrollAnimator = gfx.animator.new(scrollDura, viewportTop, targetTop, scrollEasing)
+		scrollAnimator = gfx.animator.new(scrollDura, viewport.top, targetTop, scrollEasing)
 	end
 
 	if scrollAnimator then
 		-- to maintain cursor position in view
 		local x, y = cursor:getPosition()
-		local viewY = y - viewportTop
+		local viewY = y - viewport.top
 
-		viewportTop = scrollAnimator:currentValue()
-		gfx.setDrawOffset(0, 0 - viewportTop)
-		cursor:moveTo(x, viewportTop + viewY)
+		viewport:moveTo(scrollAnimator:currentValue())
+		cursor:moveTo(x, viewport.top + viewY)
 
 		if scrollAnimator:ended() then
 			scrollAnimator = nil
@@ -365,14 +370,12 @@ function playdate.update()
 		x += vx
 		y = math.min(pageHeight, math.max(0, y + vy))
 
-		if y < viewportTop then
-			gfx.setDrawOffset(0, 0 - y)
-			viewportTop = y
+		if y < viewport.top then
+			viewport:moveTo(y)
 		end
 
-		if y > viewportTop + 240 then
-			gfx.setDrawOffset(0, 240 - y)
-			viewportTop = y - 240
+		if y > viewport.top + 240 then
+			viewport:moveTo(y - 240)
 		end
 
 		local _, _, cols, _ = cursor:moveWithCollisions(x % 400, y)
