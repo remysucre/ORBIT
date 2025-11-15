@@ -24,8 +24,9 @@ page:setSize(100, 100)
 page:moveTo(200, 120)
 page:add()
 
+page.width = 400
 page.padding = 10
-page.width = 400 - 2 * page.padding
+page.contentWidth = page.width - 2 * page.padding
 page.tail = 30
 page.linkSprites = {}
 page.hoveredLink = nil
@@ -161,7 +162,7 @@ function layout(orb)
 				local lastWordEnd = x
 				for word in string.gmatch(element.text, "%S+") do
 					local w = fnt:getTextWidth(word)
-					if x + w > page.width then
+					if x + w > page.contentWidth then
 						y += h
 						x = 0
 						x0 = 0
@@ -176,7 +177,7 @@ function layout(orb)
 					lastWordEnd = x  -- Track position after last word (before space)
 
 					local sw = fnt:getTextWidth(" ")
-					if x + sw <= page.width then
+					if x + sw <= page.contentWidth then
 						table.insert(toDraw, {
 							txt = " ",
 							x = x,
@@ -204,9 +205,9 @@ function layout(orb)
 			y += element.vspace or 30
 		end
 	end
-	
-	
-	pageHeight = math.max(240, y + 2 * page.padding)
+
+
+	pageHeight = math.max(240, y + h)
 
 	local pageImage = gfx.image.new(page.width, pageHeight)
 	if not pageImage then
@@ -217,13 +218,13 @@ function layout(orb)
 
 	for _, cmd in ipairs(toDraw) do
 		if cmd and cmd.txt then
-			gfx.drawText(cmd.txt, cmd.x, cmd.y)
+			gfx.drawText(cmd.txt, page.padding + cmd.x, cmd.y)
 		end
 	end
 
 	gfx.popContext()
 	page:setImage(pageImage)
-	page:moveTo(200, page.padding + pageHeight / 2)
+	page:moveTo(200, pageHeight / 2)
 
 	for _, link in ipairs(links) do
 		if link and link.text and link.url then
@@ -249,7 +250,7 @@ function layout(orb)
 				end
 			end
 
-			l:moveTo(page.padding + link.x + w/2, page.padding + link.y + h/2)
+			l:moveTo(page.padding + link.x + w/2, link.y + h/2)
 			l.text = link.text
 			l.url = link.url
 
