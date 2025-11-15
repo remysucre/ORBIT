@@ -27,7 +27,6 @@ page:add()
 page.width = 400
 page.padding = 10
 page.contentWidth = page.width - 2 * page.padding
-page.tail = 30
 page.linkSprites = {}
 page.hoveredLink = nil
 
@@ -207,7 +206,8 @@ function layout(orb)
 	end
 
 
-	pageHeight = math.max(240, y + h)
+	local contentHeight = y + h
+	pageHeight = math.max(240, contentHeight + 2 * page.padding)
 
 	local pageImage = gfx.image.new(page.width, pageHeight)
 	if not pageImage then
@@ -218,7 +218,7 @@ function layout(orb)
 
 	for _, cmd in ipairs(toDraw) do
 		if cmd and cmd.txt then
-			gfx.drawText(cmd.txt, page.padding + cmd.x, cmd.y)
+			gfx.drawText(cmd.txt, page.padding + cmd.x, page.padding + cmd.y)
 		end
 	end
 
@@ -250,7 +250,7 @@ function layout(orb)
 				end
 			end
 
-			l:moveTo(page.padding + link.x + w/2, link.y + h/2)
+			l:moveTo(page.padding + link.x + w/2, page.padding + link.y + h/2)
 			l.text = link.text
 			l.url = link.url
 
@@ -260,7 +260,7 @@ function layout(orb)
 	end
 
 	-- Set cursor to same screen position in new page
-	local newY = math.min(screenY, pageHeight + page.tail)
+	local newY = math.min(screenY, pageHeight)
 	cursor:moveTo(cursorX, newY)
 end
 
@@ -303,7 +303,7 @@ function playdate.update()
 	local scrollTarget = nil
 
 	if playdate.buttonJustPressed(playdate.kButtonDown) and pageHeight > 240 then
-		scrollTarget = math.min(pageHeight + page.tail - 240, viewportTop + scrollDist)
+		scrollTarget = math.min(pageHeight - 240, viewportTop + scrollDist)
 	end
 
 	if playdate.buttonJustPressed(playdate.kButtonLeft) and pageHeight > 240 then
@@ -361,7 +361,7 @@ function playdate.update()
 
 		local x, y = cursor:getPosition()
 		x += vx
-		y = math.min(pageHeight + page.tail, math.max(0, y + vy))
+		y = math.min(pageHeight, math.max(0, y + vy))
 
 		if y < viewportTop then
 			gfx.setDrawOffset(0, 0 - y)
