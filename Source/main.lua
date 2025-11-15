@@ -46,11 +46,7 @@ cursor.maxSpeed = 8
 cursor.friction = 0.85
 
 -- networking
-local httpConn = nil
-local httpData = ""
-local isLoading = false
 local frameCount = 0
-local statusMessage = nil
 local accessRequested = false
 local pageRequested = false
 
@@ -63,28 +59,29 @@ function parseURL(url)
 end
 
 function fetchPage(url)
-	if isLoading then
-		return
-	end
+	-- Clear screen and show loading message
+	gfx.clear()
+	gfx.drawTextInRect("Loading...", 20, 100, 360, 140)
 
-	isLoading = true
-	httpData = ""
-	statusMessage = "Loading..."
+	-- Flush display to show the loading message
+	playdate.display.flush()
 
 	local host, port, secure, path = parseURL(url)
 
-	httpConn = net.http.new(host, port, secure, "ORBIT")
+	local httpConn = net.http.new(host, port, secure, "ORBIT")
 
 	if not httpConn then
-		statusMessage = "Network access denied"
-		isLoading = false
+		gfx.clear()
+		gfx.drawTextInRect("Network access denied", 20, 100, 360, 140)
 		return
 	end
 
 	httpConn:setConnectTimeout(10)
 
+	local httpData = ""
+	local requestComplete = false
+
 	httpConn:setRequestCallback(function()
-		if not httpConn then return end
 		local bytes = httpConn:getBytesAvailable()
 		if bytes > 0 then
 			local chunk = httpConn:read(bytes)
@@ -95,32 +92,33 @@ function fetchPage(url)
 	end)
 
 	httpConn:setRequestCompleteCallback(function()
-		if not httpConn then return end
-		local err = httpConn:getError()
-		if err and err ~= "Connection closed" then
-			statusMessage = "Error: " .. err
-			isLoading = false
-			httpConn = nil
-			return
-		end
-
-		-- Parse JSON and layout
-		local success, result = pcall(json.decode, httpData)
-		if not success or not result or not result.content then
-			statusMessage = "Failed to load page"
-			isLoading = false
-			httpConn = nil
-			return
-		end
-
-		layout(result)
-		statusMessage = nil
-
-		isLoading = false
-		httpConn = nil
+		requestComplete = true
 	end)
 
 	httpConn:get(path)
+
+	-- Wait for request to complete
+	while not requestComplete do
+		playdate.wait(100)
+	end
+
+	-- Check for errors
+	local err = httpConn:getError()
+	if err and err ~= "Connection closed" then
+		gfx.clear()
+		gfx.drawTextInRect("Error: " .. err, 20, 100, 360, 140)
+		return
+	end
+
+	-- Parse JSON and layout
+	local success, result = pcall(json.decode, httpData)
+	if not success or not result or not result.content then
+		gfx.clear()
+		gfx.drawTextInRect("Failed to parse page", 20, 100, 360, 140)
+		return
+	end
+
+	layout(result)
 end
 
 function layout(orb)
@@ -137,13 +135,16 @@ function layout(orb)
 	page.linkSprites = {}
 	page.hoveredLink = nil
 
+	-- Stop cursor momentum
+	cursor.speed = 0
+
+	-- Preserve cursor's screen-relative position
+	local cursorX, cursorY = cursor:getPosition()
+	local screenY = cursorY - viewportTop
+
 	-- Reset viewport to top
 	viewportTop = 0
 	gfx.setDrawOffset(0, 0)
-
-	-- Reset cursor position
-	cursor:moveTo(200, 120)
-	cursor.speed = 0
 
 	local content = orb.content
 	local x = 0
@@ -251,6 +252,10 @@ function layout(orb)
 			table.insert(page.linkSprites, l)
 		end
 	end
+
+	-- Set cursor to same screen position in new page
+	local newY = math.min(screenY, pageHeight + page.tail)
+	cursor:moveTo(cursorX, newY)
 end
 
 function cursor:draw(x, y, width, height)
@@ -286,12 +291,6 @@ function playdate.update()
 	if accessRequested and not pageRequested then
 		fetchPage("https://remy.wang/index.json")
 		pageRequested = true
-	end
-
-	-- Display status message if present
-	if statusMessage then
-		gfx.clear()
-		gfx.drawTextInRect(statusMessage, 20, 100, 360, 140)
 	end
 
 	-- scrolling page with D pad
@@ -331,7 +330,7 @@ function playdate.update()
 	end
 
 	-- A button to activate links
-	if playdate.buttonJustPressed(playdate.kButtonA) then
+	if playdate.buttonJustPressed(playdate.kButtonRight) then
 		local overlapping = cursor:overlappingSprites()
 		for _, sprite in ipairs(overlapping) do
 			if sprite.url then
