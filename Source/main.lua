@@ -61,6 +61,8 @@ function layout(orb)
 				if x + w > page.width then
 					y += h
 					x = 0
+					x0 = 0
+					y0 = y
 				end
 				table.insert(toDraw, {
 					txt = word, 
@@ -146,7 +148,15 @@ local orb = json.decode([[
 			},
 			{
 				"type": "plain",
-				"text": "Vestibulum imperdiet condimentum scelerisque. Nullam efficitur placerat mi id venenatis. Nulla nibh neque, scelerisque in elit sit amet, hendrerit dignissim risus. Cras rhoncus, ligula eget sollicitudin molestie, nibh arcu mollis sapien, vel aliquet lacus mi et sem. Quisque varius diam sed dui ultrices, quis congue nunc pellentesque. Suspendisse in augue odio. Quisque porttitor erat eget feugiat aliquet. Donec consectetur lacus at felis posuere, at lacinia eros volutpat. Morbi porttitor interdum libero, vitae vehicula est varius quis. Integer vulputate eget leo nec ultrices. Fusce tempus feugiat felis. Donec ornare lacus leo, non bibendum velit vestibulum et. Nunc sed scelerisque ligula. Cras bibendum scelerisque auctor. Quisque a eros consectetur, vehicula ex eu, lobortis est."
+				"text": "Vestibulum imperdiet condimentum scelerisque. Nullam efficitur placerat mi id venenatis. Nulla nibh neque, scelerisque in elit sit amet, hendrerit dignissim risus. Cras rhoncus, ligula eget sollicitudin molestie, nibh arcu mollis sapien, vel aliquet lacus mi et sem. Quisque varius diam sed dui ultrices, quis congue nunc pellentesque. Suspendisse in augue odio. Quisque porttitor erat eget feugiat aliquet. Donec"
+			},{ 
+				"type": "link",
+				"text": "jaja there",
+				"url": "haha"
+			},
+			{
+				"type": "plain",
+				"text": " varius quis. Integer vulputate eget leo nec ultrices. Fusce tempus feugiat felis. Donec ornare lacus leo, non bibendum velit vestibulum et. Nunc sed scelerisque ligula. Cras bibendum scelerisque auctor. Quisque a eros consectetur, vehicula ex eu, lobortis est."
 			},
 			{
 				"type": "vspace"
