@@ -53,8 +53,6 @@ cursor.maxSpeed = 8
 cursor.friction = 0.85
 
 -- networking
-local frameCount = 0
-local accessRequested = false
 local pageRequested = false
 
 function parseURL(url)
@@ -292,16 +290,7 @@ end
 
 function playdate.update()
 
-	frameCount += 1
-
-	-- Request network access on first frame
-	if frameCount == 1 and not accessRequested then
-		net.http.requestAccess()
-		accessRequested = true
-	end
-
-	-- Load initial page once after access is requested
-	if accessRequested and not pageRequested then
+	if not pageRequested then
 		fetchPage("https://remy.wang/another.json")
 		pageRequested = true
 	end
