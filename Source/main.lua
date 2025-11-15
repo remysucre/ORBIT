@@ -61,6 +61,7 @@ end
 function fetchPage(url)
 	-- Clear screen and show loading message
 	gfx.clear()
+	gfx.setDrawOffset(0, 0)
 	gfx.drawTextInRect("Loading...", 20, 100, 360, 140)
 
 	-- Flush display to show the loading message
@@ -295,22 +296,25 @@ function playdate.update()
 
 	-- Load initial page once after access is requested
 	if accessRequested and not pageRequested then
-		fetchPage("https://remy.wang/index.json")
+		fetchPage("https://remy.wang/another.json")
 		pageRequested = true
 	end
 
 	-- scrolling page with D pad
+	local downPressed = playdate.buttonJustPressed(playdate.kButtonDown)
+	local leftPressed = playdate.buttonJustPressed(playdate.kButtonLeft)
 	local targetTop = nil
-
-	if playdate.buttonJustPressed(playdate.kButtonDown) and pageHeight > 240 then
-		targetTop = math.min(pageHeight - 240, viewportTop + scrollDist)
+	
+	if downPressed then
+		targetTop = math.min(math.max(pageHeight - 240, 0), viewportTop + scrollDist)
 	end
 
-	if playdate.buttonJustPressed(playdate.kButtonLeft) and pageHeight > 240 then
+	if leftPressed then
 		targetTop = math.max(0, viewportTop - scrollDist)
 	end
 
 	if targetTop then
+		assert(downPressed or leftPressed, "targetTop should only be set once right after button presses")
 		scrollAnimator = gfx.animator.new(scrollDura, viewportTop, targetTop, scrollEasing)
 	end
 
@@ -320,9 +324,7 @@ function playdate.update()
 		local viewY = y - viewportTop
 
 		viewportTop = scrollAnimator:currentValue()
-
 		gfx.setDrawOffset(0, 0 - viewportTop)
-
 		cursor:moveTo(x, viewportTop + viewY)
 
 		if scrollAnimator:ended() then
