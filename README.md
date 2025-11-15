@@ -14,7 +14,7 @@ To build, run `pdc Source ORBIT`.
 - DOWN/LEFT - Scroll page up/down
 - RIGHT - Activate link (when hovering)
 
-**Acknowledgement**
+**ACKNOWLEDGEMENT**
 
 ORBIT took inspiration from [HYPER METEOR](https://play.date/games/hyper-meteor/)
 and the [Constellation Browser](https://particlestudios.itch.io/constellation-browser).
