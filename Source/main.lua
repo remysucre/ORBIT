@@ -300,18 +300,18 @@ function playdate.update()
 	end
 
 	-- scrolling page with D pad
-	local scrollTarget = nil
+	local targetTop = nil
 
 	if playdate.buttonJustPressed(playdate.kButtonDown) and pageHeight > 240 then
-		scrollTarget = math.min(pageHeight - 240, viewportTop + scrollDist)
+		targetTop = math.min(pageHeight - 240, viewportTop + scrollDist)
 	end
 
 	if playdate.buttonJustPressed(playdate.kButtonLeft) and pageHeight > 240 then
-		scrollTarget = math.max(0, viewportTop - scrollDist)
+		targetTop = math.max(0, viewportTop - scrollDist)
 	end
 
-	if scrollTarget then
-		scrollAnimator = gfx.animator.new(scrollDura, viewportTop, scrollTarget, scrollEasing)
+	if targetTop then
+		scrollAnimator = gfx.animator.new(scrollDura, viewportTop, targetTop, scrollEasing)
 	end
 
 	if scrollAnimator then
@@ -330,11 +330,6 @@ function playdate.update()
 		end
 	end
 
-	-- rotate cursor if crank moves
-	if playdate.getCrankChange() ~= 0 then
-		cursor:markDirty()
-	end
-
 	-- A button to activate links
 	if playdate.buttonJustPressed(playdate.kButtonRight) then
 		local overlapping = cursor:overlappingSprites()
@@ -344,6 +339,11 @@ function playdate.update()
 				break
 			end
 		end
+	end
+	
+	-- rotate cursor if crank moves
+	if playdate.getCrankChange() ~= 0 then
+		cursor:markDirty()
 	end
 
 	-- UP to thrust cursor forward
