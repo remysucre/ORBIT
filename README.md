@@ -3,18 +3,17 @@ Welcome to ORBIT, a web browser for Playdate!
 ![ORBIT demo](demo.gif)
 
 Follow [instructions](https://help.play.date/games/sideloading/) to upload [`ORBIT.pdx`](ORBIT.pdx.zip) to your device.
-To build, run `pdc Source ORBIT`.
 
 **CONTROLS**
 
-- CRANK - Aim cursor direction
-- UP - Thrust cursor forward
-- DOWN/LEFT - Scroll page up/down
-- RIGHT - Activate link (when hovering)
+- CRANK to aim cursor direction
+- UP to thrust cursor forward
+- LEFT/DOWN to scroll up/down by 1 page
+- RIGHT to activate link (when hovering)
 
 **CONTENT FORMAT**
 
-ORBIT uses the [md0 format](MD0.md) for page content - a simple plain text format inspired by Markdown.
+ORBIT uses the [md0 format](md0.fyi) for page content - a simple plain text format inspired by Markdown.
 
 **ACKNOWLEDGEMENT**
 
