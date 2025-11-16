@@ -309,7 +309,7 @@ local pageRequested = false
 function playdate.update()
 
 	if not pageRequested then
-		fetchPage("https://md0.fyi/README.md")
+		fetchPage("https://remy.wang/orbit.md")
 		pageRequested = true
 	end
 
