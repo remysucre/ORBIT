@@ -18,6 +18,139 @@ local scrollDura = 400
 local history = {}
 local currentURL = nil
 
+-- favorites
+local favoritesFile = "favorites.md"
+local favorites = {} -- table of {url=, title=}
+
+function loadFavorites()
+	local file = playdate.file.open(favoritesFile, playdate.file.kFileRead)
+	if not file then
+		return
+	end
+
+	local content = file:read(playdate.file.getSize(favoritesFile))
+	file:close()
+
+	if not content then
+		return
+	end
+
+	-- Parse md0 format to extract favorites
+	favorites = {}
+	local currentTitle = nil
+	local currentURL = nil
+
+	for line in string.gmatch(content .. "\n", "([^\n]*)\n") do
+		-- Check for link reference [n]: url
+		local num, url = string.match(line, "^%[(%d+)%]:%s+(.+)$")
+		if num and url then
+			local n = tonumber(num)
+			if favorites[n] then
+				favorites[n].url = url
+			end
+		else
+			-- Check for link text [title][n]
+			local title, num = string.match(line, "^%[([^%]]+)%]%[(%d+)%]$")
+			if title and num then
+				local n = tonumber(num)
+				favorites[n] = {title = title, url = nil}
+			end
+		end
+	end
+
+	-- Convert to array and filter out incomplete entries
+	local filtered = {}
+	for _, fav in pairs(favorites) do
+		if fav.title and fav.url then
+			table.insert(filtered, fav)
+		end
+	end
+	favorites = filtered
+end
+
+function saveFavorites()
+	local file = playdate.file.open(favoritesFile, playdate.file.kFileWrite)
+	if not file then
+		return
+	end
+
+	local content = ""
+	for i, fav in ipairs(favorites) do
+		content = content .. "[" .. fav.title .. "][" .. i .. "]\n"
+	end
+	content = content .. "\n"
+	for i, fav in ipairs(favorites) do
+		content = content .. "[" .. i .. "]: " .. fav.url .. "\n"
+	end
+
+	file:write(content)
+	file:close()
+end
+
+function isFavorited(url)
+	for _, fav in ipairs(favorites) do
+		if fav.url == url then
+			return true
+		end
+	end
+	return false
+end
+
+function addFavorite(url, title)
+	if not isFavorited(url) then
+		table.insert(favorites, {url = url, title = title})
+		saveFavorites()
+	end
+end
+
+function removeFavorite(url)
+	for i, fav in ipairs(favorites) do
+		if fav.url == url then
+			table.remove(favorites, i)
+			saveFavorites()
+			return
+		end
+	end
+end
+
+function getTitleFromURL(url)
+	-- Extract a simple title from URL
+	local host = string.match(url, "^https?://([^/]+)")
+	local path = string.match(url, "^https?://[^/]+(.*)") or "/"
+	if path == "/" or path == "" then
+		return host or url
+	end
+	-- Use last path segment as title
+	local segment = string.match(path, "/([^/]+)$") or path
+	-- Remove file extension
+	segment = string.gsub(segment, "%.%w+$", "")
+	return segment
+end
+
+function openFavorites()
+	-- Read favorites file and render it locally
+	local file = playdate.file.open(favoritesFile, playdate.file.kFileRead)
+	if not file then
+		-- Create empty favorites file
+		saveFavorites()
+		file = playdate.file.open(favoritesFile, playdate.file.kFileRead)
+	end
+
+	if file then
+		local content = file:read(playdate.file.getSize(favoritesFile)) or ""
+		file:close()
+
+		-- Push current URL to history before showing favorites
+		if currentURL then
+			table.insert(history, currentURL)
+		end
+		currentURL = nil -- favorites is a local page
+		updateDogEar()
+
+		render(content)
+	end
+end
+
 -- viewport
 local viewport = {
 	top = 0
@@ -55,6 +188,31 @@ cursor.speed = 0
 cursor.thrust = 0.5
 cursor.maxSpeed = 8
 cursor.friction = 0.85
+
+-- dog ear indicator for favorites
+local dogEar = gfx.sprite.new()
+dogEar:setSize(20, 20)
+dogEar:setZIndex(32766)
+dogEar:moveTo(390, 10)
+dogEar:setIgnoresDrawOffset(true)
+dogEar.visible = false
+
+function dogEar:draw(x, y, width, height)
+	if self.visible then
+		gfx.setColor(gfx.kColorBlack)
+		gfx.fillTriangle(0, 0, 20, 0, 20, 20)
+	end
+end
+
+dogEar:add()
+
+function updateDogEar()
+	local shouldShow = currentURL and isFavorited(currentURL)
+	if dogEar.visible ~= shouldShow then
+		dogEar.visible = shouldShow
+		dogEar:markDirty()
+	end
+end
 
 function parseURL(url)
 	local secure = string.match(url, "^https://") ~= nil
@@ -132,6 +290,7 @@ function fetchPage(url, isBack)
 
 	-- Update current URL after successful render
 	currentURL = url
+	updateDogEar()
 end
 
 function render(text)
@@ -318,6 +477,29 @@ end
 -- load homepage when app starts
 local pageRequested = false
 
+-- setup menu
+local menu = playdate.getSystemMenu()
+
+menu:addMenuItem("Favorites", function()
+	openFavorites()
+end)
+
+-- Load favorites on startup
+loadFavorites()
+
+-- A button held callback for favorite toggle
+function playdate.AButtonHeld()
+	if currentURL then
+		if isFavorited(currentURL) then
+			removeFavorite(currentURL)
+		else
+			local title = getTitleFromURL(currentURL)
+			addFavorite(currentURL, title)
+		end
+		updateDogEar()
+	end
+end
+
 function playdate.update()
 
 	if not pageRequested then
@@ -356,7 +538,7 @@ function playdate.update()
 		end
 	end
 
-	-- A button to activate links
+	-- Right button to activate links
 	if playdate.buttonJustPressed(playdate.kButtonRight) then
 		local overlapping = cursor:overlappingSprites()
 		for _, sprite in ipairs(overlapping) do
@@ -366,6 +548,7 @@ function playdate.update()
 			end
 		end
 	end
+
 
 	-- B button to go back in history
 	if playdate.buttonJustPressed(playdate.kButtonB) then
