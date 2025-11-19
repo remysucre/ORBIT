@@ -14,6 +14,10 @@ local scrollEasing = playdate.easingFunctions.outQuint
 local scrollDist = 220
 local scrollDura = 400
 
+-- history stack for back navigation
+local history = {}
+local currentURL = nil
+
 -- viewport
 local viewport = {
 	top = 0
@@ -60,7 +64,12 @@ function parseURL(url)
 	return host, port, secure, path
 end
 
-function fetchPage(url)
+function fetchPage(url, isBack)
+	-- Push current URL to history before navigating (unless going back)
+	if not isBack and currentURL then
+		table.insert(history, currentURL)
+	end
+
 	-- Clear screen and show loading message
 	gfx.clear()
 	gfx.setDrawOffset(0, 0)
@@ -120,6 +129,9 @@ function fetchPage(url)
 		gfx.drawTextInRect("Failed to render page: " .. tostring(err), 20, 100, 360, 140)
 		return
 	end
+
+	-- Update current URL after successful render
+	currentURL = url
 end
 
 function render(text)
@@ -352,6 +364,14 @@ function playdate.update()
 				fetchPage(sprite.url)
 				break
 			end
+		end
+	end
+
+	-- B button to go back in history
+	if playdate.buttonJustPressed(playdate.kButtonB) then
+		if #history > 0 then
+			local prevURL = table.remove(history)
+			fetchPage(prevURL, true)
 		end
 	end
 	
