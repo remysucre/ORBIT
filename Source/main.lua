@@ -8,11 +8,31 @@ local net = playdate.network
 local fnt = gfx.font.new("fonts/SYSTEM6")
 gfx.setFont(fnt)
 
+-- Constants
+local SCREEN_WIDTH = 400
+local SCREEN_HEIGHT = 240
+local SCREEN_CENTER_X = 200
+local SCREEN_CENTER_Y = 120
+
+local CURSOR_SIZE = 25
+local CURSOR_COLLISION_RECT = {x = 7, y = 7, w = 11, h = 11}
+local CURSOR_ZINDEX = 32767
+
+local DOGEAR_SIZE = 20
+local DOGEAR_ZINDEX = 32766
+local DOGEAR_POS = {x = 390, y = 10}
+
+local MESSAGE_RECT = {x = 20, y = 100, w = 360, h = 140}
+
+local PAGE_PADDING = 10
+
 -- d pad scrolling
-local scrollAnimator = nil
-local scrollEasing = playdate.easingFunctions.outQuint
-local scrollDist = 220
-local scrollDura = 400
+local scroll = {
+	animator = nil,
+	easing = playdate.easingFunctions.outQuint,
+	distance = 220,
+	duration = 400
+}
 
 -- history stack for back navigation
 local history = {}
@@ -127,6 +147,16 @@ function getTitleFromURL(url)
 	return segment
 end
 
+-- Utility: Display a message on screen
+function showMessage(message, flush)
+	gfx.clear()
+	gfx.setDrawOffset(0, 0)
+	gfx.drawTextInRect(message, MESSAGE_RECT.x, MESSAGE_RECT.y, MESSAGE_RECT.w, MESSAGE_RECT.h)
+	if flush then
+		playdate.display.flush()
+	end
+end
+
 function openFavorites()
 	-- Read favorites file and render it locally
 	local file = playdate.file.open(favoritesFile, playdate.file.kFileRead)
@@ -161,46 +191,87 @@ function viewport:moveTo(top)
 	gfx.setDrawOffset(0, -self.top)
 end
 
--- page
-local page = gfx.sprite.new()
-page:setSize(100, 100)
-page:moveTo(200, 120)
-page:add()
+-- LinkSprite class for interactive links
+class('LinkSprite').extends(gfx.sprite)
 
-page.height = 0
-page.width = 400
-page.padding = 10
-page.contentWidth = page.width - 2 * page.padding
-page.linkSprites = {}
-page.hoveredLink = nil
+function LinkSprite:init(text, url, x, y, width, font)
+	LinkSprite.super.init(self)
 
--- cursor
-local cursor = gfx.sprite.new()
-cursor:moveTo(130, 42)
-cursor:setSize(25, 25)
-cursor:setZIndex(32767)
-cursor:setCollideRect( 7, 7, 11, 11 )
-cursor:setGroups({1})
-cursor:add()
+	local textHeight = font:getHeight()
+	self:setSize(width, textHeight)
+	self:setCollideRect(0, 0, width, textHeight)
+	self:setCollidesWithGroups({1})
+	self:moveTo(x, y)
 
-cursor.collisionResponse = gfx.sprite.kCollisionTypeOverlap
-cursor.speed = 0
-cursor.thrust = 0.5
-cursor.maxSpeed = 8
-cursor.friction = 0.85
+	self.collisionResponse = gfx.sprite.kCollisionTypeOverlap
+	self.text = text
+	self.url = url
+	self.width = width
+	self.height = textHeight
+end
+
+function LinkSprite:draw()
+	local lineWidth = gfx.getLineWidth()
+	if #self:overlappingSprites() > 0 then
+		gfx.setLineWidth(2)
+	end
+	gfx.drawLine(0, self.height - 2, self.width, self.height - 2)
+	gfx.setLineWidth(lineWidth)
+end
+
+-- Page initialization
+function initializePage()
+	local page = gfx.sprite.new()
+	page:setSize(100, 100)
+	page:moveTo(SCREEN_CENTER_X, SCREEN_CENTER_Y)
+	page:add()
+
+	page.height = 0
+	page.width = SCREEN_WIDTH
+	page.padding = PAGE_PADDING
+	page.contentWidth = page.width - 2 * page.padding
+	page.linkSprites = {}
+	page.hoveredLink = nil
+
+	return page
+end
+
+local page = initializePage()
+
+-- Cursor initialization
+function initializeCursor()
+	local cursor = gfx.sprite.new()
+	cursor:moveTo(130, 42)
+	cursor:setSize(CURSOR_SIZE, CURSOR_SIZE)
+	cursor:setZIndex(CURSOR_ZINDEX)
+	cursor:setCollideRect(CURSOR_COLLISION_RECT.x, CURSOR_COLLISION_RECT.y,
+	                      CURSOR_COLLISION_RECT.w, CURSOR_COLLISION_RECT.h)
+	cursor:setGroups({1})
+	cursor:add()
+
+	cursor.collisionResponse = gfx.sprite.kCollisionTypeOverlap
+	cursor.speed = 0
+	cursor.thrust = 0.5
+	cursor.maxSpeed = 8
+	cursor.friction = 0.85
+
+	return cursor
+end
+
+local cursor = initializeCursor()
 
 -- dog ear indicator for favorites
 local dogEar = gfx.sprite.new()
-dogEar:setSize(20, 20)
-dogEar:setZIndex(32766)
-dogEar:moveTo(390, 10)
+dogEar:setSize(DOGEAR_SIZE, DOGEAR_SIZE)
+dogEar:setZIndex(DOGEAR_ZINDEX)
+dogEar:moveTo(DOGEAR_POS.x, DOGEAR_POS.y)
 dogEar:setIgnoresDrawOffset(true)
 dogEar.visible = false
 
 function dogEar:draw(x, y, width, height)
 	if self.visible then
 		gfx.setColor(gfx.kColorBlack)
-		gfx.fillTriangle(0, 0, 20, 0, 20, 20)
+		gfx.fillTriangle(0, 0, DOGEAR_SIZE, 0, DOGEAR_SIZE, DOGEAR_SIZE)
 	end
 end
 
@@ -222,28 +293,13 @@ function parseURL(url)
 	return host, port, secure, path
 end
 
-function fetchPage(url, isBack)
-	-- Push current URL to history before navigating (unless going back)
-	if not isBack and currentURL then
-		table.insert(history, currentURL)
-	end
-
-	-- Clear screen and show loading message
-	gfx.clear()
-	gfx.setDrawOffset(0, 0)
-	gfx.drawTextInRect("Loading...", 20, 100, 360, 140)
-
-	-- Flush display to show the loading message
-	playdate.display.flush()
-
+function makeHttpRequest(url)
 	local host, port, secure, path = parseURL(url)
 
 	local httpConn = net.http.new(host, port, secure, "ORBIT")
 
 	if not httpConn then
-		gfx.clear()
-		gfx.drawTextInRect("Network access denied", 20, 100, 360, 140)
-		return
+		return nil, "Network access denied"
 	end
 
 	httpConn:setConnectTimeout(10)
@@ -275,16 +331,29 @@ function fetchPage(url, isBack)
 	-- Check for errors
 	local err = httpConn:getError()
 	if err and err ~= "Connection closed" then
-		gfx.clear()
-		gfx.drawTextInRect("Error: " .. err, 20, 100, 360, 140)
+		return nil, err
+	end
+
+	return httpData, nil
+end
+
+function fetchPage(url, isBack)
+	-- Push current URL to history before navigating (unless going back)
+	if not isBack and currentURL then
+		table.insert(history, currentURL)
+	end
+
+	showMessage("Loading...", true)
+
+	local data, err = makeHttpRequest(url)
+	if err then
+		showMessage("Error: " .. err)
 		return
 	end
 
-	-- Render md0 content
-	local success, err = pcall(render, httpData)
+	local success, renderErr = pcall(render, data)
 	if not success then
-		gfx.clear()
-		gfx.drawTextInRect("Failed to render page: " .. tostring(err), 20, 100, 360, 140)
+		showMessage("Failed to render page: " .. tostring(renderErr))
 		return
 	end
 
@@ -293,8 +362,7 @@ function fetchPage(url, isBack)
 	updateDogEar()
 end
 
-function render(text)
-	-- Remove old link sprites
+function cleanupLinkSprites()
 	for _, linkSprite in ipairs(page.linkSprites) do
 		if linkSprite then
 			linkSprite:remove()
@@ -302,84 +370,57 @@ function render(text)
 	end
 	page.linkSprites = {}
 	page.hoveredLink = nil
+end
 
-	-- Stop cursor momentum
-	cursor.speed = 0
-
-	-- Preserve cursor's screen-relative position
-	local cursorX, cursorY = cursor:getPosition()
-	local screenY = cursorY - viewport.top
-
-	-- Reset viewport to top
-	viewport:moveTo(0)
-
-	local h = fnt:getHeight()
-	local x, y = 0, 0
-	local toDraw = {}
-	local linkRefs = {}
-
-	-- Helper to create link sprite
-	local function createLinkSprite(text, url, lx, ly, width)
-		local l = gfx.sprite.new()
-		local textHeight = fnt:getHeight()
-		l:setSize(width, textHeight)
-		l:setCollideRect(0, 0, width, textHeight)
-		l:setCollidesWithGroups({1})
-		l.collisionResponse = gfx.sprite.kCollisionTypeOverlap
-
-		local w, h = width, textHeight
-
-		function l:draw(x, y, width, height)
-			local lw = gfx.getLineWidth()
-			if #self:overlappingSprites() > 0 then
-				gfx.setLineWidth(2)
-			end
-			gfx.drawLine(0, h-2, w, h-2)
-			gfx.setLineWidth(lw)
-		end
-
-		l:moveTo(page.padding + lx + w/2, page.padding + ly + h/2)
-		l.text = text
-		l.url = url
-
-		l:add()
-		table.insert(page.linkSprites, l)
-	end
-
-	-- Process all lines in single pass
+function parseMarkdownLinks(text, linkRefs)
+	-- Process all lines to extract link definitions and create sprites
+	local textHeight = fnt:getHeight()
 	for line in string.gmatch(text .. "\n", "([^\n]*)\n") do
-		-- Check if this is a link definition
 		local num, url = string.match(line, "^%[(%d+)%]:%s+(.+)$")
 		if num and url then
-			-- Create sprites for all refs to this link
 			local n = tonumber(num)
 			if linkRefs[n] then
 				for _, ref in ipairs(linkRefs[n]) do
-					createLinkSprite(ref.text, url, ref.x, ref.y, ref.width)
+					local link = LinkSprite(ref.text, url,
+						page.padding + ref.x + ref.width / 2,
+						page.padding + ref.y + textHeight / 2,
+						ref.width, fnt)
+					link:add()
+					table.insert(page.linkSprites, link)
 				end
 			end
-		else
-			-- Content line (blank or not)
-			-- Process line word by word
+		end
+	end
+end
+
+function layoutText(text, linkRefs)
+	local h = fnt:getHeight()
+	local x, y = 0, 0
+	local toDraw = {}
+
+	for line in string.gmatch(text .. "\n", "([^\n]*)\n") do
+		-- Skip link definition lines
+		local num, url = string.match(line, "^%[(%d+)%]:%s+(.+)$")
+		if not num then
+			-- Content line - process word by word
 			for token in string.gmatch(line, "%S+") do
-				-- Try to match [word][n] with optional trailing characters
 				local word, num, trailing = string.match(token, "^%[(%S+)%]%[(%d+)%](.*)$")
 
 				if word and num then
-					-- Render link text
+					-- Link text
 					local x0, y0 = x, y
 					local w = fnt:getTextWidth(word)
 
 					if x + w > page.contentWidth then
-						y += h
+						y = y + h
 						x = 0
 						x0, y0 = x, y
 					end
 
 					table.insert(toDraw, {txt = word, x = x, y = y})
-					x += w
+					x = x + w
 
-					-- Save link reference
+					-- Save link reference for later sprite creation
 					local n = tonumber(num)
 					if not linkRefs[n] then
 						linkRefs[n] = {}
@@ -391,91 +432,120 @@ function render(text)
 						width = w
 					})
 
-					-- Render trailing characters if any
+					-- Handle trailing characters
 					if trailing and #trailing > 0 then
 						local tw = fnt:getTextWidth(trailing)
-
 						if x + tw > page.contentWidth then
-							y += h
+							y = y + h
 							x = 0
 						end
-
 						table.insert(toDraw, {txt = trailing, x = x, y = y})
-						x += tw
+						x = x + tw
 					end
 				else
 					-- Plain word
 					local w = fnt:getTextWidth(token)
-
 					if x + w > page.contentWidth then
-						y += h
+						y = y + h
 						x = 0
 					end
-
 					table.insert(toDraw, {txt = token, x = x, y = y})
-					x += w
+					x = x + w
 				end
 
 				-- Add space after word
 				local sw = fnt:getTextWidth(" ")
 				if x + sw <= page.contentWidth then
 					table.insert(toDraw, {txt = " ", x = x, y = y})
-					x += sw
+					x = x + sw
 				end
 			end
 
 			-- Move to next line
 			x = 0
-			y += h
+			y = y + h
 		end
 	end
 
 	local contentHeight = y + h
-	page.height = math.max(240, contentHeight + 2 * page.padding)
+	return toDraw, contentHeight
+end
 
-	local pageImage = gfx.image.new(page.width, page.height)
+function renderPageImage(toDraw, pageHeight)
+	local pageImage = gfx.image.new(page.width, pageHeight)
 	if not pageImage then
-		return
+		return nil
 	end
 
 	gfx.pushContext(pageImage)
-
 	for _, cmd in ipairs(toDraw) do
 		if cmd and cmd.txt then
 			fnt:drawText(cmd.txt, page.padding + cmd.x, page.padding + cmd.y)
 		end
 	end
-
 	gfx.popContext()
-	page:setImage(pageImage)
-	page:moveTo(200, page.height / 2)
 
-	-- Set cursor to same screen position in new page
-	local newY = math.min(screenY, page.height)
-	cursor:moveTo(cursorX, newY)
+	return pageImage
 end
 
-function cursor:draw(x, y, width, height)
+function render(text)
+	cleanupLinkSprites()
+
+	-- Stop cursor momentum
+	cursor.speed = 0
+
+	-- Preserve cursor's screen-relative position
+	local cursorX, cursorY = cursor:getPosition()
+	local screenY = cursorY - viewport.top
+
+	-- Reset viewport to top
+	viewport:moveTo(0)
+
+	-- Layout text and collect link references
+	local linkRefs = {}
+	local toDraw, contentHeight = layoutText(text, linkRefs)
+
+	-- Create link sprites from references
+	parseMarkdownLinks(text, linkRefs)
+
+	-- Calculate page height and render to image
+	page.height = math.max(SCREEN_HEIGHT, contentHeight + 2 * page.padding)
+	local pageImage = renderPageImage(toDraw, page.height)
+
+	if pageImage then
+		page:setImage(pageImage)
+		page:moveTo(SCREEN_CENTER_X, page.height / 2)
+
+		-- Set cursor to same screen position in new page
+		local newY = math.min(screenY, page.height)
+		cursor:moveTo(cursorX, newY)
+	end
+end
+
+function cursor:draw(drawX, drawY, drawWidth, drawHeight)
 	local w, h = self:getSize()
-	local moon = geo.point.new(math.floor(w/2)+1, h-3)
-	local tran = geo.affineTransform.new()
+	local centerX, centerY = math.floor(w / 2) + 1, math.floor(h / 2) + 1
+	local moon = geo.point.new(centerX, h - 3)
+	local transform = geo.affineTransform.new()
 
-	tran:rotate(playdate.getCrankPosition(), math.floor(w/2)+1, math.floor(h/2)+1)
-	tran:transformPoint(moon)
+	transform:rotate(playdate.getCrankPosition(), centerX, centerY)
+	transform:transformPoint(moon)
 
-	local x, y = moon:unpack()
+	local moonX, moonY = moon:unpack()
 
-	playdate.graphics.setColor(playdate.graphics.kColorWhite)
-	gfx.fillRect(x-3, y-3, 5, 5)
+	-- Draw white outer squares
+	gfx.setColor(gfx.kColorWhite)
+	gfx.fillRect(moonX - 3, moonY - 3, 5, 5)
 	gfx.fillRect(8, 8, 9, 9)
 
-	playdate.graphics.setColor(playdate.graphics.kColorBlack)
-	gfx.fillRect(x-2, y-2, 3, 3)
+	-- Draw black inner squares
+	gfx.setColor(gfx.kColorBlack)
+	gfx.fillRect(moonX - 2, moonY - 2, 3, 3)
 	gfx.fillRect(9, 9, 7, 7)
 end
 
 -- load homepage when app starts
-local pageRequested = false
+local initialPageLoaded = false
 
 -- setup menu
 local menu = playdate.getSystemMenu()
@@ -502,39 +572,41 @@ end
 
 function playdate.update()
 
-	if not pageRequested then
+	if not initialPageLoaded then
 		fetchPage("https://orbit.casa/tutorial.md")
-		pageRequested = true
+		initialPageLoaded = true
 	end
 
 	-- scrolling page with D pad
-	local downPressed = playdate.buttonJustPressed(playdate.kButtonDown)
-	local leftPressed = playdate.buttonJustPressed(playdate.kButtonLeft)
-	local targetTop = nil
-	
-	if downPressed then
-		targetTop = math.min(math.max(page.height - 240, 0), viewport.top + scrollDist)
+	local scrollDirection = nil
+	if playdate.buttonJustPressed(playdate.kButtonDown) then
+		scrollDirection = 1  -- scroll down
+	elseif playdate.buttonJustPressed(playdate.kButtonLeft) then
+		scrollDirection = -1  -- scroll up
 	end
 
-	if leftPressed then
-		targetTop = math.max(0, viewport.top - scrollDist)
+	if scrollDirection then
+		local targetTop
+		if scrollDirection > 0 then
+			-- Scroll down
+			targetTop = math.min(math.max(page.height - SCREEN_HEIGHT, 0), viewport.top + scroll.distance)
+		else
+			-- Scroll up
+			targetTop = math.max(0, viewport.top - scroll.distance)
+		end
+		scroll.animator = gfx.animator.new(scroll.duration, viewport.top, targetTop, scroll.easing)
 	end
 
-	if targetTop then
-		assert(downPressed or leftPressed, "targetTop should only be set once right after button presses")
-		scrollAnimator = gfx.animator.new(scrollDura, viewport.top, targetTop, scrollEasing)
-	end
+	if scroll.animator then
+		-- Maintain cursor position in viewport during scroll
+		local cursorX, cursorY = cursor:getPosition()
+		local viewportY = cursorY - viewport.top
 
-	if scrollAnimator then
-		-- to maintain cursor position in view
-		local x, y = cursor:getPosition()
-		local viewY = y - viewport.top
+		viewport:moveTo(scroll.animator:currentValue())
+		cursor:moveTo(cursorX, viewport.top + viewportY)
 
-		viewport:moveTo(scrollAnimator:currentValue())
-		cursor:moveTo(x, viewport.top + viewY)
-
-		if scrollAnimator:ended() then
-			scrollAnimator = nil
+		if scroll.animator:ended() then
+			scroll.animator = nil
 		end
 	end
 
@@ -575,23 +647,24 @@ function playdate.update()
 	local vy = math.sin(radians) * cursor.speed
 
 	if vx ~= 0 or vy ~= 0 then
+		local cursorX, cursorY = cursor:getPosition()
+		cursorX = cursorX + vx
+		cursorY = math.min(page.height, math.max(0, cursorY + vy))
 
-		local x, y = cursor:getPosition()
-		x += vx
-		y = math.min(page.height, math.max(0, y + vy))
-
-		if y < viewport.top then
-			viewport:moveTo(y)
+		-- Auto-scroll viewport to keep cursor visible
+		if cursorY < viewport.top then
+			viewport:moveTo(cursorY)
 		end
 
-		if y > viewport.top + 240 then
-			viewport:moveTo(y - 240)
+		if cursorY > viewport.top + SCREEN_HEIGHT then
+			viewport:moveTo(cursorY - SCREEN_HEIGHT)
 		end
 
-		local _, _, cols, _ = cursor:moveWithCollisions(x % 400, y)
-		if #cols > 0 then
-			for _, col in ipairs(cols) do
-				col.other:markDirty()
+		-- Move cursor with collision detection, wrapping horizontally
+		local _, _, collisions, _ = cursor:moveWithCollisions(cursorX % SCREEN_WIDTH, cursorY)
+		if #collisions > 0 then
+			for _, collision in ipairs(collisions) do
+				collision.other:markDirty()
 			end
 		end
 	end
