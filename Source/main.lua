@@ -191,7 +191,86 @@ function viewport:moveTo(top)
 	gfx.setDrawOffset(0, -self.top)
 end
 
+-- Page initialization
+function initializePage()
+	local page = gfx.sprite.new()
+	page:setSize(100, 100)
+	page:moveTo(SCREEN_CENTER_X, SCREEN_CENTER_Y)
+	page:add()
+
+	page.height = 0
+	page.width = SCREEN_WIDTH
+	page.padding = PAGE_PADDING
+	page.contentWidth = page.width - 2 * page.padding
+	page.links = {}  -- Array of Link objects
+
+	return page
+end
+
+local page = initializePage()
+
+-- Cursor initialization
+function initializeCursor()
+	local cursor = gfx.sprite.new()
+
+	cursor:moveTo(130, 42)
+	cursor:setSize(CURSOR_SIZE, CURSOR_SIZE)
+	cursor:setZIndex(CURSOR_ZINDEX)
+	cursor:setCollideRect(CURSOR_COLLISION_RECT.x, CURSOR_COLLISION_RECT.y,
+	                      CURSOR_COLLISION_RECT.w, CURSOR_COLLISION_RECT.h)
+	cursor:setGroups({1})
+	cursor:add()
+
+	cursor.collisionResponse = gfx.sprite.kCollisionTypeOverlap
+	cursor.speed = 0
+	cursor.thrust = 0.5
+	cursor.maxSpeed = 8
+	cursor.friction = 0.85
+
+	return cursor
+end
+
+local cursor = initializeCursor()
+
+function cursor:updateImage()
+	local w, h = self:getSize()
+	local centerX, centerY = math.floor(w / 2) + 1, math.floor(h / 2) + 1
+	local moon = geo.point.new(centerX, h - 3)
+	local transform = geo.affineTransform.new()
+
+	transform:rotate(playdate.getCrankPosition(), centerX, centerY)
+	transform:transformPoint(moon)
+
+	local moonX, moonY = moon:unpack()
+
+	-- Create new image
+	local cursorImage = gfx.image.new(CURSOR_SIZE, CURSOR_SIZE, gfx.kColorClear)
+	gfx.pushContext(cursorImage)
+
+	-- Draw collision area (white, for alphaCollision)
+	gfx.setColor(gfx.kColorWhite)
+	gfx.fillRect(CURSOR_COLLISION_RECT.x, CURSOR_COLLISION_RECT.y,
+	             CURSOR_COLLISION_RECT.w, CURSOR_COLLISION_RECT.h)
+
+	-- Draw white outer squares (visible cursor design)
+	gfx.setColor(gfx.kColorWhite)
+	gfx.fillRect(moonX - 3, moonY - 3, 5, 5)
+	gfx.fillRect(8, 8, 9, 9)
+
+	-- Draw black inner squares
+	gfx.setColor(gfx.kColorBlack)
+	gfx.fillRect(moonX - 2, moonY - 2, 3, 3)
+	gfx.fillRect(9, 9, 7, 7)
+
+	gfx.popContext()
+
+	self:setImage(cursorImage)
+end
+
+cursor:updateImage()  -- Set initial cursor image
+
 -- Link class that represents a clickable link (extends sprite)
+-- Defined after cursor so it can access cursor as an upvalue
 class('Link').extends(gfx.sprite)
 
 function Link:init(text, url, linkNum, segments, font, padding)
@@ -265,7 +344,7 @@ function Link:init(text, url, linkNum, segments, font, padding)
 	local posY = padding + minY
 	print("Link position:", posX, posY)
 	self:moveTo(posX, posY)
-	self:setZIndex(-1)  -- Above page content so links are visible
+	self:setZIndex(-1)  -- Behind page content
 	self:setCollideRect(0, 0, width, height)
 	self:setCollidesWithGroups({1})
 	self.collisionResponse = gfx.sprite.kCollisionTypeOverlap
@@ -313,84 +392,6 @@ function Link:redrawImage(isHovered)
 	gfx.popContext()
 	self:setImage(image)
 end
-
--- Page initialization
-function initializePage()
-	local page = gfx.sprite.new()
-	page:setSize(100, 100)
-	page:moveTo(SCREEN_CENTER_X, SCREEN_CENTER_Y)
-	page:add()
-
-	page.height = 0
-	page.width = SCREEN_WIDTH
-	page.padding = PAGE_PADDING
-	page.contentWidth = page.width - 2 * page.padding
-	page.links = {}  -- Array of Link objects
-
-	return page
-end
-
-local page = initializePage()
-
--- Cursor initialization
-function initializeCursor()
-	local cursor = gfx.sprite.new()
-
-	cursor:moveTo(130, 42)
-	cursor:setSize(CURSOR_SIZE, CURSOR_SIZE)
-	cursor:setZIndex(CURSOR_ZINDEX)
-	cursor:setCollideRect(CURSOR_COLLISION_RECT.x, CURSOR_COLLISION_RECT.y,
-	                      CURSOR_COLLISION_RECT.w, CURSOR_COLLISION_RECT.h)
-	cursor:setGroups({1})
-	cursor:add()
-
-	cursor.collisionResponse = gfx.sprite.kCollisionTypeOverlap
-	cursor.speed = 0
-	cursor.thrust = 0.5
-	cursor.maxSpeed = 8
-	cursor.friction = 0.85
-
-	return cursor
-end
-
-cursor = initializeCursor()  -- Global so Link sprites can access it
-
-function cursor:updateImage()
-	local w, h = self:getSize()
-	local centerX, centerY = math.floor(w / 2) + 1, math.floor(h / 2) + 1
-	local moon = geo.point.new(centerX, h - 3)
-	local transform = geo.affineTransform.new()
-
-	transform:rotate(playdate.getCrankPosition(), centerX, centerY)
-	transform:transformPoint(moon)
-
-	local moonX, moonY = moon:unpack()
-
-	-- Create new image
-	local cursorImage = gfx.image.new(CURSOR_SIZE, CURSOR_SIZE, gfx.kColorClear)
-	gfx.pushContext(cursorImage)
-
-	-- Draw collision area (white, for alphaCollision)
-	gfx.setColor(gfx.kColorWhite)
-	gfx.fillRect(CURSOR_COLLISION_RECT.x, CURSOR_COLLISION_RECT.y,
-	             CURSOR_COLLISION_RECT.w, CURSOR_COLLISION_RECT.h)
-
-	-- Draw white outer squares (visible cursor design)
-	gfx.setColor(gfx.kColorWhite)
-	gfx.fillRect(moonX - 3, moonY - 3, 5, 5)
-	gfx.fillRect(8, 8, 9, 9)
-
-	-- Draw black inner squares
-	gfx.setColor(gfx.kColorBlack)
-	gfx.fillRect(moonX - 2, moonY - 2, 3, 3)
-	gfx.fillRect(9, 9, 7, 7)
-
-	gfx.popContext()
-
-	self:setImage(cursorImage)
-end
-
-cursor:updateImage()  -- Set initial cursor image
 
 -- dog ear indicator for favorites
 local dogEar = gfx.sprite.new()
