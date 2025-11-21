@@ -398,66 +398,228 @@ function layoutText(text, linkRefs)
 	local x, y = 0, 0
 	local toDraw = {}
 
+	-- Link state tracking
+	local inLink = false
+	local linkStartX, linkStartY = nil, nil
+	local linkText = ""
+	local linkSegments = {}  -- Collect all segments for current link
+
 	for line in string.gmatch(text .. "\n", "([^\n]*)\n") do
 		-- Skip link definition lines
 		local num, url = string.match(line, "^%[(%d+)%]:%s+(.+)$")
 		if not num then
 			-- Content line - process word by word
 			for token in string.gmatch(line, "%S+") do
-				local word, num, trailing = string.match(token, "^%[(%S+)%]%[(%d+)%](.*)$")
+				if not inLink then
+					-- Check if token starts with '[' - entering link mode
+					if string.sub(token, 1, 1) == "[" then
+						-- Check if it's a complete single-word link [word][num]
+						local word, linkNum, trailing = string.match(token, "^%[([^%]]+)%]%[(%d+)%](.*)$")
 
-				if word and num then
-					-- Link text
-					local x0, y0 = x, y
-					local w = fnt:getTextWidth(word)
+						if word and linkNum then
+							-- Single-word link (no spaces in link text)
+							local x0, y0 = x, y
+							local w = fnt:getTextWidth(word)
 
-					if x + w > page.contentWidth then
-						y = y + h
-						x = 0
-						x0, y0 = x, y
-					end
+							if x + w > page.contentWidth then
+								y = y + h
+								x = 0
+								x0, y0 = x, y
+							end
 
-					table.insert(toDraw, {txt = word, x = x, y = y})
-					x = x + w
+							table.insert(toDraw, {txt = word, x = x, y = y})
+							x = x + w
 
-					-- Save link reference for later sprite creation
-					local n = tonumber(num)
-					if not linkRefs[n] then
-						linkRefs[n] = {}
-					end
-					table.insert(linkRefs[n], {
-						text = word,
-						x = x0,
-						y = y0,
-						width = w
-					})
+							-- Save link reference for later sprite creation
+							local n = tonumber(linkNum)
+							if not linkRefs[n] then
+								linkRefs[n] = {}
+							end
+							table.insert(linkRefs[n], {
+								text = word,
+								x = x0,
+								y = y0,
+								width = w
+							})
 
-					-- Handle trailing characters
-					if trailing and #trailing > 0 then
-						local tw = fnt:getTextWidth(trailing)
-						if x + tw > page.contentWidth then
+							-- Handle trailing characters
+							if trailing and #trailing > 0 then
+								local tw = fnt:getTextWidth(trailing)
+								if x + tw > page.contentWidth then
+									y = y + h
+									x = 0
+								end
+								table.insert(toDraw, {txt = trailing, x = x, y = y})
+								x = x + tw
+							end
+						else
+							-- Multi-word link starting - extract first word without '['
+							local firstWord = string.sub(token, 2)
+							inLink = true
+							linkStartX, linkStartY = x, y
+							linkText = firstWord
+							linkSegments = {}
+
+							local w = fnt:getTextWidth(firstWord)
+							if x + w > page.contentWidth then
+								y = y + h
+								x = 0
+								linkStartX, linkStartY = x, y
+							end
+
+							table.insert(toDraw, {txt = firstWord, x = x, y = y})
+							x = x + w
+						end
+					else
+						-- Plain word
+						local w = fnt:getTextWidth(token)
+						if x + w > page.contentWidth then
 							y = y + h
 							x = 0
 						end
-						table.insert(toDraw, {txt = trailing, x = x, y = y})
-						x = x + tw
+						table.insert(toDraw, {txt = token, x = x, y = y})
+						x = x + w
 					end
 				else
-					-- Plain word
-					local w = fnt:getTextWidth(token)
-					if x + w > page.contentWidth then
-						y = y + h
-						x = 0
+					-- Inside a multi-word link
+					-- Check if this word ends the link with '][num]'
+					local endWord, linkNum, trailing = string.match(token, "^(.+)%]%[(%d+)%](.*)$")
+
+					if endWord then
+						-- Link ends with this word
+						-- First, add space before this word (we're continuing the link)
+						local sw = fnt:getTextWidth(" ")
+						if x + sw <= page.contentWidth then
+							table.insert(toDraw, {txt = " ", x = x, y = y})
+							x = x + sw
+						else
+							-- Space wraps - save current segment and start new line
+							local segWidth = page.contentWidth - linkStartX
+							if segWidth > 0 then
+								table.insert(linkSegments, {
+									x = linkStartX,
+									y = linkStartY,
+									width = segWidth
+								})
+							end
+							y = y + h
+							x = 0
+							linkStartX, linkStartY = x, y
+						end
+
+						local w = fnt:getTextWidth(endWord)
+						if x + w > page.contentWidth then
+							-- This word wraps - save current segment if any
+							if x > linkStartX then
+								local segWidth = page.contentWidth - linkStartX
+								if segWidth > 0 then
+									table.insert(linkSegments, {
+										x = linkStartX,
+										y = linkStartY,
+										width = segWidth
+									})
+								end
+							end
+							y = y + h
+							x = 0
+							linkStartX, linkStartY = x, y
+						end
+
+						table.insert(toDraw, {txt = endWord, x = x, y = y})
+						linkText = linkText .. " " .. endWord
+						x = x + w
+
+						-- Save final link segment
+						local segWidth = x - linkStartX
+						table.insert(linkSegments, {
+							x = linkStartX,
+							y = linkStartY,
+							width = segWidth
+						})
+
+						-- Now add all segments to linkRefs with the complete link text
+						local n = tonumber(linkNum)
+						if not linkRefs[n] then
+							linkRefs[n] = {}
+						end
+						for _, seg in ipairs(linkSegments) do
+							table.insert(linkRefs[n], {
+								text = linkText,
+								x = seg.x,
+								y = seg.y,
+								width = seg.width
+							})
+						end
+
+						-- Exit link mode
+						inLink = false
+						linkText = ""
+						linkStartX, linkStartY = nil, nil
+						linkSegments = {}
+
+						-- Handle trailing characters
+						if trailing and #trailing > 0 then
+							local tw = fnt:getTextWidth(trailing)
+							if x + tw > page.contentWidth then
+								y = y + h
+								x = 0
+							end
+							table.insert(toDraw, {txt = trailing, x = x, y = y})
+							x = x + tw
+						end
+					else
+						-- Middle word in link - continue accumulating
+						-- Add space before this word
+						local sw = fnt:getTextWidth(" ")
+						if x + sw <= page.contentWidth then
+							table.insert(toDraw, {txt = " ", x = x, y = y})
+							x = x + sw
+						else
+							-- Space doesn't fit - save current segment and wrap
+							local segWidth = page.contentWidth - linkStartX
+							if segWidth > 0 then
+								table.insert(linkSegments, {
+									x = linkStartX,
+									y = linkStartY,
+									width = segWidth
+								})
+							end
+							y = y + h
+							x = 0
+							linkStartX, linkStartY = x, y
+						end
+
+						local w = fnt:getTextWidth(token)
+						if x + w > page.contentWidth then
+							-- Word itself wraps - save current segment if any
+							if x > linkStartX then
+								local segWidth = page.contentWidth - linkStartX
+								if segWidth > 0 then
+									table.insert(linkSegments, {
+										x = linkStartX,
+										y = linkStartY,
+										width = segWidth
+									})
+								end
+							end
+							y = y + h
+							x = 0
+							linkStartX, linkStartY = x, y
+						end
+
+						table.insert(toDraw, {txt = token, x = x, y = y})
+						linkText = linkText .. " " .. token
+						x = x + w
 					end
-					table.insert(toDraw, {txt = token, x = x, y = y})
-					x = x + w
 				end
 
-				-- Add space after word
-				local sw = fnt:getTextWidth(" ")
-				if x + sw <= page.contentWidth then
-					table.insert(toDraw, {txt = " ", x = x, y = y})
-					x = x + sw
+				-- Add space after word (except when in link)
+				if not inLink then
+					local sw = fnt:getTextWidth(" ")
+					if x + sw <= page.contentWidth then
+						table.insert(toDraw, {txt = " ", x = x, y = y})
+						x = x + sw
+					end
 				end
 			end
 
@@ -573,7 +735,8 @@ end
 function playdate.update()
 
 	if not initialPageLoaded then
-		fetchPage("https://orbit.casa/tutorial.md")
+		-- fetchPage("https://orbit.casa/tutorial.md")
+		fetchPage("https://orbit.casa/test-multiword-links.md")
 		initialPageLoaded = true
 	end
 
