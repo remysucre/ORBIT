@@ -409,6 +409,8 @@ function fetchPage(url)
 		-- Clear loading state
 		httpData = nil
 		cursor.blinker:stop()
+		cursor.on = true
+		cursor:updateImage()
 	end)
 
 	-- Start the request
