@@ -799,7 +799,8 @@ function playdate.update()
 			fetchPage(prevURL, true)
 		end
 	
-	else-- Browsing mode 
+	-- Browsing mode
+	else
 
 		-- Rotate cursor if crank moves
 		if playdate.getCrankChange() ~= 0 then
