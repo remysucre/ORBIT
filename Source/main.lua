@@ -1,5 +1,6 @@
 import "CoreLibs/graphics"
 import "CoreLibs/sprites"
+import "CoreLibs/animation"
 
 local gfx = playdate.graphics
 local geo = playdate.geometry
@@ -151,6 +152,9 @@ function initializeCursor()
 	cursor.maxSpeed = 8
 	cursor.friction = 0.8
 
+	cursor.blinker = gfx.animation.blinker.new(200, 200, true, 6, true)
+	cursor.blinker:stop()
+
 	return cursor
 end
 
@@ -183,8 +187,11 @@ function cursor:updateImage()
 
 	-- Draw black inner squares
 	gfx.setColor(gfx.kColorBlack)
-	gfx.fillRect(moonX - 2, moonY - 2, 3, 3)
 	gfx.fillRect(9, 9, 7, 7)
+
+	if not self.blinker.running or self.blinker.on then
+		gfx.fillRect(moonX - 2, moonY - 2, 3, 3)
+	end
 
 	gfx.popContext()
 
@@ -350,6 +357,9 @@ function fetchPage(url)
 	-- showMessage("Loading...")
 	httpData = ""
 
+	-- Start cursor blinking to indicate loading
+	cursor.blinker:start()
+
 	-- Parse URL and create HTTP connection
 	local host, port, secure, path = parseURL(url)
 	local httpConn = net.http.new(host, port, secure, "ORBIT")
@@ -375,6 +385,7 @@ function fetchPage(url)
 
 	-- Callback when request completes
 	httpConn:setRequestCompleteCallback(function()
+
 		-- Check for errors
 		local err = httpConn:getError()
 		if err and err ~= "Connection closed" then
@@ -397,7 +408,7 @@ function fetchPage(url)
 
 		-- Clear loading state
 		httpData = nil
-		playdate.start()
+		cursor.blinker:stop()
 	end)
 
 	-- Start the request
@@ -816,7 +827,8 @@ function playdate.update()
 	end
 
 	-- Rotate cursor if crank moves
-	if playdate.getCrankChange() ~= 0 then
+	if playdate.getCrankChange() ~= 0 or 
+	   cursor.blinker.running then
 		cursor:updateImage()
 	end
 
@@ -874,10 +886,5 @@ function playdate.update()
 	end
 
 	gfx.sprite.update()
-
-	if httpData then
-		local msg = gfx.imageWithText("Loading...", MESSAGE_RECT.w, MESSAGE_RECT.h)
-		msg:drawIgnoringOffset(MESSAGE_RECT.x, MESSAGE_RECT.y)
-	end
-
+	gfx.animation.blinker.updateAll()
 end
