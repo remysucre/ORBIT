@@ -781,91 +781,84 @@ function playdate.update()
 	if not initialPageLoaded then
 		fetchPage("https://orbit.casa/tutorial.md")
 		initialPageLoaded = true
-		return
-	end
 
-	-- scrolling page with D pad
-	if playdate.buttonJustPressed(playdate.kButtonDown) then
-		local maxTop = math.max(page.height - SCREEN_HEIGHT, 0)
-		local targetTop = math.min(maxTop, viewport.top + scroll.distance)
-
-		scroll.animator = gfx.animator.new(scroll.duration, viewport.top, targetTop, scroll.easing)
-	elseif playdate.buttonJustPressed(playdate.kButtonLeft) then
-		local targetTop = math.max(0, viewport.top - scroll.distance)
-
-		scroll.animator = gfx.animator.new(scroll.duration, viewport.top, targetTop, scroll.easing)
-	end
-
-	if scroll.animator then
-		-- Maintain cursor position in viewport during scroll
-		local cursorX, cursorY = cursor:getPosition()
-		local viewportY = cursorY - viewport.top
-
-		viewport:moveTo(scroll.animator:currentValue())
-		cursor:moveTo(cursorX, viewport.top + viewportY)
-
-		if scroll.animator:ended() then
-			scroll.animator = nil
-		end
-	end
-
-	-- Right button to activate links
-	if playdate.buttonJustPressed(playdate.kButtonRight) then
-		for _, link in ipairs(page.links) do
+	-- A/RIGHT to activate links
+	elseif playdate.buttonJustPressed(playdate.kButtonRight) or 
+		   playdate.buttonJustPressed(playdate.kButtonA) then
+		for _, link in ipairs(cursor:overlappingSprites()) do
 			if cursor:alphaCollision(link) then
 				fetchPage(link.url)
-				return
+				break
 			end
 		end
-	end
 
-	-- B button to go back in history
-	if playdate.buttonJustPressed(playdate.kButtonB) then
+	-- B to go back in history
+	elseif playdate.buttonJustPressed(playdate.kButtonB) then
 		if #history > 0 then
 			local prevURL = table.remove(history)
 			fetchPage(prevURL, true)
-			return
 		end
-	end
+	
+	else-- Browsing mode 
 
-	-- rotate cursor if crank moves
-	if playdate.getCrankChange() ~= 0 then
-		cursor:updateImage()
-	end
-
-	-- UP to thrust cursor forward
-	if playdate.buttonIsPressed(playdate.kButtonUp) then
-		cursor.speed = math.min(cursor.maxSpeed, cursor.speed + cursor.thrust)
-	else
-		cursor.speed = cursor.speed * cursor.friction
-	end
-
-	local radians = math.rad(playdate.getCrankPosition() - 90)  -- Adjust for 0° being up
-	local vx = math.cos(radians) * cursor.speed
-	local vy = math.sin(radians) * cursor.speed
-
-	if vx ~= 0 or vy ~= 0 then
-		local cursorX, cursorY = cursor:getPosition()
-		cursorX = cursorX + vx
-		cursorY = math.min(page.height, math.max(0, cursorY + vy))
-
-		-- Auto-scroll viewport to keep cursor visible
-		if cursorY < viewport.top then
-			viewport:moveTo(cursorY)
+		-- Rotate cursor if crank moves
+		if playdate.getCrankChange() ~= 0 then
+			cursor:updateImage()
 		end
 
-		if cursorY > viewport.top + SCREEN_HEIGHT then
-			viewport:moveTo(cursorY - SCREEN_HEIGHT)
+		-- UP to thrust cursor forward
+		if playdate.buttonIsPressed(playdate.kButtonUp) then
+			cursor.speed = math.min(cursor.maxSpeed, cursor.speed + cursor.thrust)
+		else
+			cursor.speed = cursor.speed * cursor.friction
 		end
 
-		-- Move cursor with collision detection, wrapping horizontally
-		local _, _, collisions, _ = cursor:moveWithCollisions(cursorX % SCREEN_WIDTH, cursorY)
-		if #collisions > 0 then
+		if cursor.speed ~= 0 then
+			local radians = math.rad(playdate.getCrankPosition() - 90)  -- Adjust for 0° being up
+			local vx = math.cos(radians) * cursor.speed
+			local vy = math.sin(radians) * cursor.speed
+
+			local x, y = cursor:getPosition()
+			x = x + vx
+			y = math.min(page.height, math.max(0, y + vy))
+
+			-- Keep cursor in view
+			if y < viewport.top then
+				viewport:moveTo(y)
+			elseif y - SCREEN_HEIGHT > viewport.top then
+				viewport:moveTo(y - SCREEN_HEIGHT)
+			end
+
+			local _, _, collisions, _ = cursor:moveWithCollisions(x % SCREEN_WIDTH, y)
 			for _, collision in ipairs(collisions) do
 				collision.other:markDirty()
 			end
 		end
-	end
 
-	gfx.sprite.update()
+		-- Scrolling page with D pad
+		if playdate.buttonJustPressed(playdate.kButtonDown) then
+			local maxTop = math.max(page.height - SCREEN_HEIGHT, 0)
+			local targetTop = math.min(maxTop, viewport.top + scroll.distance)
+
+			scroll.animator = gfx.animator.new(scroll.duration, viewport.top, targetTop, scroll.easing)
+		elseif playdate.buttonJustPressed(playdate.kButtonLeft) then
+			local targetTop = math.max(0, viewport.top - scroll.distance)
+
+			scroll.animator = gfx.animator.new(scroll.duration, viewport.top, targetTop, scroll.easing)
+		end
+
+		if scroll.animator then
+			-- Maintain cursor position in viewport during scroll
+			local x, y = cursor:getPosition()
+			local dy = y - viewport.top
+
+			viewport:moveTo(scroll.animator:currentValue())
+			cursor:moveTo(x, viewport.top + dy)
+			if scroll.animator:ended() then
+				scroll.animator = nil
+			end
+		end
+
+		gfx.sprite.update()
+	end
 end
