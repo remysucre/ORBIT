@@ -93,14 +93,16 @@ function getTitleFromURL(url)
 	return segment
 end
 
--- Utility: Display a message on screen
-function showMessage(message)
-	playdate.stop()
-	gfx.clear()
-	gfx.setDrawOffset(0, 0)
-	gfx.drawText(message, MESSAGE_RECT.x, MESSAGE_RECT.y)
-	playdate.display.flush()
-end
+-- -- Utility: Display a message on screen
+-- function showMessage(message)
+-- 	-- playdate.stop()
+-- 	-- gfx.clear()
+-- 	-- gfx.setDrawOffset(0, 0)
+-- 	local img = gfx.imageWithText(message, MESSAGE_RECT.w, MESSAGE_RECT.h,
+-- 	                                  gfx.kTextAlignment.center)
+-- 	img:drawIgnoringOffset(MESSAGE_RECT.x, MESSAGE_RECT.y)
+-- 	-- playdate.display.flush()
+-- end
 
 
 -- Viewport
@@ -324,14 +326,28 @@ function parseURL(url)
 	return host, port, secure, path
 end
 
-function fetchPage(url, isBack)
+-- url = nil means go back in history
+function fetchPage(url)
 
-	if not isBack and currentURL then
-		table.insert(history, currentURL)
+	if httpData then
+		-- A request is already in progress
+		return
+	end
+
+	if url then
+		if currentURL then
+			table.insert(history, currentURL)
+		end
+	else -- Go back in history
+		url = table.remove(history)
+		if not url then
+			-- No history to go back to
+			return
+		end
 	end
 
 	-- Show loading message and set loading state
-	showMessage("Loading...")
+	-- showMessage("Loading...")
 	httpData = ""
 
 	-- Parse URL and create HTTP connection
@@ -339,7 +355,7 @@ function fetchPage(url, isBack)
 	local httpConn = net.http.new(host, port, secure, "ORBIT")
 
 	if not httpConn then
-		showMessage("Error: Network access denied")
+		-- showMessage("Error: Network access denied")
 		httpData = nil
 		return
 	end
@@ -362,7 +378,7 @@ function fetchPage(url, isBack)
 		-- Check for errors
 		local err = httpConn:getError()
 		if err and err ~= "Connection closed" then
-			showMessage("Error: " .. err)
+			-- showMessage("Error: " .. err)
 			httpData = nil
 			return
 		end
@@ -370,7 +386,7 @@ function fetchPage(url, isBack)
 		-- Render the page
 		local success, renderErr = pcall(render, httpData)
 		if not success then
-			showMessage("Failed to render page: " .. tostring(renderErr))
+			-- showMessage("Failed to render page: " .. tostring(renderErr))
 			httpData = nil
 			return
 		end
@@ -780,9 +796,10 @@ function playdate.update()
 	if not initialPageLoaded then
 		fetchPage("https://orbit.casa/tutorial.md")
 		initialPageLoaded = true
+	end
 
 	-- A/RIGHT to activate links
-	elseif playdate.buttonJustPressed(playdate.kButtonRight) or 
+	if playdate.buttonJustPressed(playdate.kButtonRight) or 
 		   playdate.buttonJustPressed(playdate.kButtonA) then
 		for _, link in ipairs(cursor:overlappingSprites()) do
 			if cursor:alphaCollision(link) then
@@ -790,75 +807,77 @@ function playdate.update()
 				break
 			end
 		end
+	end
 
 	-- B to go back in history
-	elseif playdate.buttonJustPressed(playdate.kButtonB) then
-		if #history > 0 then
-			local prevURL = table.remove(history)
-			fetchPage(prevURL, true)
-		end
+	if playdate.buttonJustPressed(playdate.kButtonB) then
+		fetchPage(nil)
 	
-	-- Browsing mode
-	else
-
-		-- Rotate cursor if crank moves
-		if playdate.getCrankChange() ~= 0 then
-			cursor:updateImage()
-		end
-
-		-- UP to thrust cursor forward
-		if playdate.buttonIsPressed(playdate.kButtonUp) then
-			cursor.speed = math.min(cursor.maxSpeed, cursor.speed + cursor.thrust)
-		else
-			cursor.speed = cursor.speed * cursor.friction
-		end
-
-		if cursor.speed ~= 0 then
-			local radians = math.rad(playdate.getCrankPosition() - 90)  -- Adjust for 0° being up
-			local vx = math.cos(radians) * cursor.speed
-			local vy = math.sin(radians) * cursor.speed
-
-			local x, y = cursor:getPosition()
-			x = x + vx
-			y = math.min(page.height, math.max(0, y + vy))
-
-			-- Keep cursor in view
-			if y < viewport.top then
-				viewport:moveTo(y)
-			elseif y - SCREEN_HEIGHT > viewport.top then
-				viewport:moveTo(y - SCREEN_HEIGHT)
-			end
-
-			local _, _, collisions, _ = cursor:moveWithCollisions(x % SCREEN_WIDTH, y)
-			for _, collision in ipairs(collisions) do
-				collision.other:markDirty()
-			end
-		end
-
-		-- Scrolling page with D pad
-		if playdate.buttonJustPressed(playdate.kButtonDown) then
-			local maxTop = math.max(page.height - SCREEN_HEIGHT, 0)
-			local targetTop = math.min(maxTop, viewport.top + scroll.distance)
-
-			scroll.animator = gfx.animator.new(scroll.duration, viewport.top, targetTop, scroll.easing)
-		elseif playdate.buttonJustPressed(playdate.kButtonLeft) then
-			local targetTop = math.max(0, viewport.top - scroll.distance)
-
-			scroll.animator = gfx.animator.new(scroll.duration, viewport.top, targetTop, scroll.easing)
-		end
-
-		if scroll.animator then
-			-- Maintain cursor position in viewport during scroll
-			local x, y = cursor:getPosition()
-			local dy = y - viewport.top
-
-			viewport:moveTo(scroll.animator:currentValue())
-			cursor:moveTo(x, viewport.top + dy)
-			if scroll.animator:ended() then
-				scroll.animator = nil
-			end
-		end
-
-		gfx.sprite.update()
 	end
+
+	-- Rotate cursor if crank moves
+	if playdate.getCrankChange() ~= 0 then
+		cursor:updateImage()
+	end
+
+	-- UP to thrust cursor forward
+	if playdate.buttonIsPressed(playdate.kButtonUp) then
+		cursor.speed = math.min(cursor.maxSpeed, cursor.speed + cursor.thrust)
+	else
+		cursor.speed = cursor.speed * cursor.friction
+	end
+
+	if cursor.speed ~= 0 then
+		local radians = math.rad(playdate.getCrankPosition() - 90)  -- Adjust for 0° being up
+		local vx = math.cos(radians) * cursor.speed
+		local vy = math.sin(radians) * cursor.speed
+
+		local x, y = cursor:getPosition()
+		x = x + vx
+		y = math.min(page.height, math.max(0, y + vy))
+
+		-- Keep cursor in view
+		if y < viewport.top then
+			viewport:moveTo(y)
+		elseif y - SCREEN_HEIGHT > viewport.top then
+			viewport:moveTo(y - SCREEN_HEIGHT)
+		end
+
+		local _, _, collisions, _ = cursor:moveWithCollisions(x % SCREEN_WIDTH, y)
+		for _, collision in ipairs(collisions) do
+			collision.other:markDirty()
+		end
+	end
+
+	-- Scrolling page with D pad
+	if playdate.buttonJustPressed(playdate.kButtonDown) then
+		local maxTop = math.max(page.height - SCREEN_HEIGHT, 0)
+		local targetTop = math.min(maxTop, viewport.top + scroll.distance)
+
+		scroll.animator = gfx.animator.new(scroll.duration, viewport.top, targetTop, scroll.easing)
+	elseif playdate.buttonJustPressed(playdate.kButtonLeft) then
+		local targetTop = math.max(0, viewport.top - scroll.distance)
+
+		scroll.animator = gfx.animator.new(scroll.duration, viewport.top, targetTop, scroll.easing)
+	end
+
+	if scroll.animator then
+		-- Maintain cursor position in viewport during scroll
+		local x, y = cursor:getPosition()
+		local dy = y - viewport.top
+
+		viewport:moveTo(scroll.animator:currentValue())
+		cursor:moveTo(x, viewport.top + dy)
+		if scroll.animator:ended() then
+			scroll.animator = nil
+		end
+	end
+
+	gfx.sprite.update()
+
+	if httpData then
+		local msg = gfx.imageWithText("Loading...", MESSAGE_RECT.w, MESSAGE_RECT.h)
+		msg:drawIgnoringOffset(MESSAGE_RECT.x, MESSAGE_RECT.y)
+	end
+
 end
