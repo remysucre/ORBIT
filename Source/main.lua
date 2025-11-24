@@ -9,10 +9,9 @@ local fnt = gfx.font.new("fonts/SYSTEM6")
 gfx.setFont(fnt)
 
 -- Constants
-local SCREEN_WIDTH = 400
-local SCREEN_HEIGHT = 240
-local SCREEN_CENTER_X = 200
-local SCREEN_CENTER_Y = 120
+local SCREEN_WIDTH, SCREEN_HEIGHT = playdate.display.getSize()
+local SCREEN_CENTER_X = SCREEN_WIDTH / 2
+local SCREEN_CENTER_Y = SCREEN_HEIGHT / 2
 
 local CURSOR_SIZE = 25
 local CURSOR_COLLISION_RECT = {x = 8, y = 8, w = 9, h = 9}
@@ -22,7 +21,7 @@ local MESSAGE_RECT = {x = 20, y = 100, w = 360, h = 140}
 
 local PAGE_PADDING = 10
 
--- d pad scrolling
+-- D-pad scrolling
 local scroll = {
 	animator = nil,
 	easing = playdate.easingFunctions.outQuint,
@@ -30,14 +29,14 @@ local scroll = {
 	duration = 400
 }
 
--- history stack for back navigation
+-- History stack for back navigation
 local history = {}
 local currentURL = nil
 
 -- HTTP request data buffer
 local httpData = nil
 
--- favorites
+-- Favorites
 local favoritesFile = "favorites"
 local favorites = {} -- table of {url=, title=}
 
@@ -104,7 +103,7 @@ function showMessage(message)
 end
 
 
--- viewport
+-- Viewport
 local viewport = {
 	top = 0
 }
@@ -148,7 +147,7 @@ function initializeCursor()
 	cursor.speed = 0
 	cursor.thrust = 0.5
 	cursor.maxSpeed = 8
-	cursor.friction = 0.85
+	cursor.friction = 0.8
 
 	return cursor
 end
