@@ -412,77 +412,49 @@ local function layoutWords(text, x, y, font, contentWidth)
 	return x, y, segments
 end
 
--- Layout fragments from cmark parser
--- fragments: array of {type="text"|"link"|"break", text=string, url=string (for links)}
--- Returns: toDraw segments, contentHeight, and populates page.links
-function layoutFragments(fragments)
-	local h = fnt:getHeight()
-	local x, y = 0, 0
-	local toDraw = {}
+function render(text)
+	cleanupLinks()
+	viewport.top = 0
 
+	local fragments = json.decode(cmark.parse(text)) or {}
+	local h = fnt:getHeight()
+	local textSegments = {}
+
+	-- Layout pass: create links, buffer text segments
+	local x, y = 0, 0
 	for _, frag in ipairs(fragments) do
 		if frag.type == "break" then
-			x = 0
-			y = y + h * 2  -- blank line between paragraphs
-		elseif frag.type == "link" then
+			x, y = 0, y + h * 2
+		else
 			local segments
 			x, y, segments = layoutWords(frag.text, x, y, fnt, page.contentWidth)
-			if #segments > 0 then
+			if frag.type == "link" then
 				local success, link = pcall(Link, frag.url, segments, fnt, page.padding)
 				if success then
 					link:add()
 					table.insert(page.links, link)
 				end
+			else
+				for _, seg in ipairs(segments) do
+					table.insert(textSegments, seg)
+				end
 			end
-			-- Links draw their own text, so don't add to toDraw
-		else -- text
-			local segments
-			x, y, segments = layoutWords(frag.text, x, y, fnt, page.contentWidth)
-			for _, seg in ipairs(segments) do table.insert(toDraw, seg) end
 		end
 	end
 
-	return toDraw, y + h
-end
-
-function renderPageImage(toDraw, pageHeight)
-	local pageImage = gfx.image.new(page.width, pageHeight)
-	if not pageImage then
-		return nil
-	end
+	-- Create image and draw text
+	page.height = math.max(SCREEN_HEIGHT, y + h + 2 * page.padding)
+	local pageImage = gfx.image.new(page.width, page.height)
+	if not pageImage then return end
 
 	gfx.pushContext(pageImage)
-	for _, seg in ipairs(toDraw) do
+	for _, seg in ipairs(textSegments) do
 		fnt:drawText(seg.text, page.padding + seg.x, page.padding + seg.y)
 	end
 	gfx.popContext()
 
-	return pageImage
-end
-
-function render(text)
-	cleanupLinks()
-
-	-- Reset viewport to top (no sprites to move since links were just cleaned up)
-	viewport.top = 0
-
-	-- Parse markdown using cmark C extension
-	local jsonStr = cmark.parse(text)
-
-	-- Decode JSON into fragments array
-	local fragments = json.decode(jsonStr) or {}
-
-	-- Layout fragments (this also creates link sprites)
-	local toDraw, contentHeight = layoutFragments(fragments)
-
-	-- Calculate page height and render to image
-	page.height = math.max(SCREEN_HEIGHT, contentHeight + 2 * page.padding)
-	local pageImage = renderPageImage(toDraw, page.height)
-
-	if pageImage then
-		page:setImage(pageImage)
-		page:moveTo(0, 0)
-	end
+	page:setImage(pageImage)
+	page:moveTo(0, 0)
 end
 
 -- load homepage when app starts
