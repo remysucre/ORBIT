@@ -432,29 +432,74 @@ function cleanupLinks()
 	page.links = {}
 end
 
-function parseMarkdownLinks(text, linkRefs)
-	-- Process all lines to extract link definitions and create Link sprites
-	for line in string.gmatch(text .. "\n", "([^\n]*)\n") do
-		local num, url = string.match(line, "^%[(%d+)%]:%s+(.+)$")
-		if num and url then
-			local n = tonumber(num)
-			if linkRefs[n] then
-				-- Get link text and segments
-				local linkText = linkRefs[n][1].text  -- All segments have same text
-				local segments = {}
+-- Layout fragments from cmark parser
+-- fragments: array of {type="text"|"link", text=string, url=string (for links)}
+-- Returns: toDraw commands, contentHeight, and populates page.links
+function layoutFragments(fragments)
+	local h = fnt:getHeight()
+	local x, y = 0, 0
+	local toDraw = {}
+	local linkNum = 0  -- Counter for link IDs
 
-				-- Collect segment positions
-				for _, ref in ipairs(linkRefs[n]) do
-					table.insert(segments, {
-						x = ref.x,
-						y = ref.y,
-						width = ref.width
-					})
+	for _, frag in ipairs(fragments) do
+		local text = frag.text or ""
+
+		if frag.type == "link" then
+			-- Link fragment - track segments for hit detection
+			linkNum = linkNum + 1
+			local linkStartX, linkStartY = x, y
+			local linkSegments = {}
+			local linkText = text
+
+			-- Process link text word by word
+			for word in string.gmatch(text, "%S+") do
+				local w = fnt:getTextWidth(word)
+				local sw = fnt:getTextWidth(" ")
+
+				-- Check if word fits on current line
+				if x > 0 and x + w > page.contentWidth then
+					-- Save current segment before wrapping (if any content)
+					if x > linkStartX then
+						table.insert(linkSegments, {
+							x = linkStartX,
+							y = linkStartY,
+							width = x - linkStartX
+						})
+					end
+					-- Wrap to next line
+					y = y + h
+					x = 0
+					linkStartX, linkStartY = x, y
 				end
 
-				-- Create Link sprite with error handling
+				table.insert(toDraw, {txt = word, x = x, y = y})
+				x = x + w
+
+				-- Add space after word (within link)
+				if x + sw <= page.contentWidth then
+					table.insert(toDraw, {txt = " ", x = x, y = y})
+					x = x + sw
+				end
+			end
+
+			-- Save final segment
+			if x > linkStartX then
+				-- Remove trailing space from segment width
+				local trailingSpace = fnt:getTextWidth(" ")
+				local segWidth = x - linkStartX - trailingSpace
+				if segWidth > 0 then
+					table.insert(linkSegments, {
+						x = linkStartX,
+						y = linkStartY,
+						width = segWidth
+					})
+				end
+			end
+
+			-- Create link sprite if we have segments
+			if #linkSegments > 0 then
 				local success, link = pcall(function()
-					return Link(linkText, url, n, segments, fnt, page.padding)
+					return Link(linkText, frag.url, linkNum, linkSegments, fnt, page.padding)
 				end)
 
 				if success then
@@ -464,218 +509,37 @@ function parseMarkdownLinks(text, linkRefs)
 					print("Failed to create link:", linkText, "error:", link)
 				end
 			end
-		end
-	end
-end
 
-function layoutText(text, linkRefs)
-	local h = fnt:getHeight()
-	local x, y = 0, 0
-	local toDraw = {}
+		else
+			-- Text fragment - process character by character for proper wrapping
+			-- Handle newlines and word wrapping
+			for line in string.gmatch(text .. "\n", "([^\n]*)\n") do
+				if line ~= "" then
+					-- Process line word by word
+					for word in string.gmatch(line, "%S+") do
+						local w = fnt:getTextWidth(word)
+						local sw = fnt:getTextWidth(" ")
 
-	-- Link state tracking
-	local inLink = false
-	local linkStartX, linkStartY = nil, nil
-	local linkText = ""
-	local linkSegments = {}  -- Collect all segments for current link
-
-	for line in string.gmatch(text .. "\n", "([^\n]*)\n") do
-		-- Skip link definition lines
-		local num, url = string.match(line, "^%[(%d+)%]:%s+(.+)$")
-		if not num then
-			-- Content line - process word by word
-			for token in string.gmatch(line, "%S+") do
-				if not inLink then
-					-- Check if token starts with '[' - entering link mode
-					if string.sub(token, 1, 1) == "[" then
-						-- Check if it's a complete single-word link [word][num]
-						local word, linkNum, trailing = string.match(token, "^%[([^%]]+)%]%[(%d+)%](.*)$")
-
-						if word and linkNum then
-							-- Single-word link (no spaces in link text)
-							local x0, y0 = x, y
-							local w = fnt:getTextWidth(word)
-
-							if x + w > page.contentWidth then
-								y = y + h
-								x = 0
-								x0, y0 = x, y
-							end
-
-							table.insert(toDraw, {txt = word, x = x, y = y})
-							x = x + w
-
-							-- Save link reference for later sprite creation
-							local n = tonumber(linkNum)
-							if not linkRefs[n] then
-								linkRefs[n] = {}
-							end
-							table.insert(linkRefs[n], {
-								text = word,
-								x = x0,
-								y = y0,
-								width = w
-							})
-
-							-- Handle trailing characters
-							if trailing and #trailing > 0 then
-								local tw = fnt:getTextWidth(trailing)
-								if x + tw > page.contentWidth then
-									y = y + h
-									x = 0
-								end
-								table.insert(toDraw, {txt = trailing, x = x, y = y})
-								x = x + tw
-							end
-						else
-							-- Multi-word link starting - extract first word without '['
-							local firstWord = string.sub(token, 2)
-							inLink = true
-							linkStartX, linkStartY = x, y
-							linkText = firstWord
-							linkSegments = {}
-
-							local w = fnt:getTextWidth(firstWord)
-							if x + w > page.contentWidth then
-								y = y + h
-								x = 0
-								linkStartX, linkStartY = x, y
-							end
-
-							table.insert(toDraw, {txt = firstWord, x = x, y = y})
-							x = x + w
-						end
-					else
-						-- Plain word
-						local w = fnt:getTextWidth(token)
-						if x + w > page.contentWidth then
+						-- Check if word fits on current line
+						if x > 0 and x + w > page.contentWidth then
 							y = y + h
 							x = 0
 						end
-						table.insert(toDraw, {txt = token, x = x, y = y})
+
+						table.insert(toDraw, {txt = word, x = x, y = y})
 						x = x + w
-					end
-				else
-					-- Inside a multi-word link
-					-- Check if this word ends the link with '][num]'
-					local endWord, linkNum, trailing = string.match(token, "^(.+)%]%[(%d+)%](.*)$")
 
-					if endWord then
-						-- Link ends with this word
-						-- Check if we need space and if the word will fit
-						local sw = fnt:getTextWidth(" ")
-						local w = fnt:getTextWidth(endWord)
-
-						-- Check if word+space fits on current line
-						if x + sw + w <= page.contentWidth then
-							-- Both space and word fit
+						-- Add space after word
+						if x + sw <= page.contentWidth then
 							table.insert(toDraw, {txt = " ", x = x, y = y})
 							x = x + sw
-						else
-							-- Word doesn't fit (with or without space) - save current segment and wrap
-							if x > linkStartX then
-								local segWidth = x - linkStartX
-								if segWidth > 0 then
-									table.insert(linkSegments, {
-										x = linkStartX,
-										y = linkStartY,
-										width = segWidth
-									})
-								end
-							end
-							y = y + h
-							x = 0
-							linkStartX, linkStartY = x, y
 						end
-
-						table.insert(toDraw, {txt = endWord, x = x, y = y})
-						linkText = linkText .. " " .. endWord
-						x = x + w
-
-						-- Save final link segment
-						local segWidth = x - linkStartX
-						table.insert(linkSegments, {
-							x = linkStartX,
-							y = linkStartY,
-							width = segWidth
-						})
-
-						-- Now add all segments to linkRefs with the complete link text
-						local n = tonumber(linkNum)
-						if not linkRefs[n] then
-							linkRefs[n] = {}
-						end
-						for _, seg in ipairs(linkSegments) do
-							table.insert(linkRefs[n], {
-								text = linkText,
-								x = seg.x,
-								y = seg.y,
-								width = seg.width
-							})
-						end
-
-						-- Exit link mode
-						inLink = false
-						linkText = ""
-						linkStartX, linkStartY = nil, nil
-						linkSegments = {}
-
-						-- Handle trailing characters
-						if trailing and #trailing > 0 then
-							local tw = fnt:getTextWidth(trailing)
-							if x + tw > page.contentWidth then
-								y = y + h
-								x = 0
-							end
-							table.insert(toDraw, {txt = trailing, x = x, y = y})
-							x = x + tw
-						end
-					else
-						-- Middle word in link - continue accumulating
-						local sw = fnt:getTextWidth(" ")
-						local w = fnt:getTextWidth(token)
-
-						-- Check if word+space fits on current line
-						if x + sw + w <= page.contentWidth then
-							-- Both space and word fit
-							table.insert(toDraw, {txt = " ", x = x, y = y})
-							x = x + sw
-						else
-							-- Word doesn't fit - save current segment and wrap
-							if x > linkStartX then
-								local segWidth = x - linkStartX
-								if segWidth > 0 then
-									table.insert(linkSegments, {
-										x = linkStartX,
-										y = linkStartY,
-										width = segWidth
-									})
-								end
-							end
-							y = y + h
-							x = 0
-							linkStartX, linkStartY = x, y
-						end
-
-						table.insert(toDraw, {txt = token, x = x, y = y})
-						linkText = linkText .. " " .. token
-						x = x + w
 					end
 				end
-
-				-- Add space after word (except when in link)
-				if not inLink then
-					local sw = fnt:getTextWidth(" ")
-					if x + sw <= page.contentWidth then
-						table.insert(toDraw, {txt = " ", x = x, y = y})
-						x = x + sw
-					end
-				end
+				-- Move to next line after each \n
+				x = 0
+				y = y + h
 			end
-
-			-- Move to next line
-			x = 0
-			y = y + h
 		end
 	end
 
@@ -701,7 +565,6 @@ function renderPageImage(toDraw, pageHeight)
 end
 
 function render(text)
-	print("=== render() start ===")
 	cleanupLinks()
 
 	-- Stop cursor momentum
@@ -710,28 +573,23 @@ function render(text)
 	-- Reset viewport to top (no sprites to move since links were just cleaned up)
 	viewport.top = 0
 
-	-- Layout text and collect link references
-	local linkRefs = {}
-	local toDraw, contentHeight = layoutText(text, linkRefs)
-	print("Layout complete, contentHeight:", contentHeight, "toDraw items:", #toDraw)
+	-- Parse markdown using cmark C extension
+	local jsonStr = cmark.parse(text)
 
-	-- Create link sprites from references
-	parseMarkdownLinks(text, linkRefs)
-	print("Links parsed, count:", #page.links)
+	-- Decode JSON into fragments array
+	local fragments = json.decode(jsonStr) or {}
+
+	-- Layout fragments (this also creates link sprites)
+	local toDraw, contentHeight = layoutFragments(fragments)
 
 	-- Calculate page height and render to image
 	page.height = math.max(SCREEN_HEIGHT, contentHeight + 2 * page.padding)
 	local pageImage = renderPageImage(toDraw, page.height)
-	print("Page image created:", pageImage ~= nil, "size:", page.height)
 
 	if pageImage then
 		page:setImage(pageImage)
 		page:moveTo(SCREEN_CENTER_X, page.height / 2)
-		print("Page image set")
-	else
-		print("ERROR: pageImage is nil!")
 	end
-	print("=== render() end ===")
 end
 
 -- load homepage when app starts

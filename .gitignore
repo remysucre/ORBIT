@@ -1,1 +1,9 @@
 .DS_Store
+
+# Build artifacts
+build/
+Source/pdex.dylib
+Source/pdex.elf
+
+# Compiled Playdate bundle
+ORBIT.pdx/
