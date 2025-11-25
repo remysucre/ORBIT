@@ -210,7 +210,7 @@ cursor:updateImage()  -- Set initial cursor image
 -- Defined after cursor so it can access cursor as an upvalue
 class('Link').extends(gfx.sprite)
 
-function Link:init(text, url, linkNum, segments, font, padding)
+function Link:init(url, segments, font, padding)
 	-- Calculate bounding box from all segments first
 	local minX = math.huge
 	local minY = math.huge
@@ -228,18 +228,13 @@ function Link:init(text, url, linkNum, segments, font, padding)
 	local width = maxX - minX
 	local height = maxY - minY + textHeight
 
-	print("Link init:", text, "bounds:", minX, minY, maxX, maxY, "size:", width, height)
-
 	if width <= 0 or height <= 0 or width ~= width then
-		print("ERROR: Invalid dimensions!")
 		error("Invalid link dimensions: " .. tostring(width) .. "x" .. tostring(height))
 	end
 
 	Link.super.init(self)
 
-	self.text = text
 	self.url = url
-	self.linkNum = linkNum
 	self.segments = segments  -- Array of {x, y, width}
 	self.font = font
 	self.textHeight = textHeight
@@ -250,8 +245,6 @@ function Link:init(text, url, linkNum, segments, font, padding)
 
 	-- Create sprite image with collision boxes and underlines
 	local image = gfx.image.new(width, height)
-	print("Link image created:", image ~= nil)
-
 	if not image then
 		error("Failed to create link image")
 	end
@@ -277,16 +270,12 @@ function Link:init(text, url, linkNum, segments, font, padding)
 	self:setImage(image)
 	self:setSize(width, height)
 	self:setCenter(0, 0)
-	local posX = padding + minX
-	local posY = padding + minY
-	print("Link position:", posX, posY)
-	self:moveTo(posX, posY)
+	self:moveTo(padding + minX, padding + minY)
 	self:setZIndex(-1)  -- Behind page content
 	self:setCollideRect(0, 0, width, height)
 	self:setCollidesWithGroups({1})
 	self.collisionResponse = gfx.sprite.kCollisionTypeOverlap
-	self.wasHovered = false  -- Track hover state
-	print("Link init complete")
+	self.wasHovered = false
 end
 
 function Link:update()
@@ -432,6 +421,49 @@ function cleanupLinks()
 	page.links = {}
 end
 
+-- Shared word-wrapping function for both plain text and links
+-- Returns: newX, newY, draws array, segments array (if trackSegments)
+local function layoutWords(text, x, y, font, contentWidth, trackSegments)
+	local draws = {}
+	local segments = trackSegments and {} or nil
+	local h = font:getHeight()
+	local segStartX, segStartY = x, y
+
+	for word in string.gmatch(text, "%S+") do
+		local w = font:getTextWidth(word)
+		local sw = font:getTextWidth(" ")
+
+		if x > 0 and x + w > contentWidth then
+			-- Save segment before wrap (if tracking)
+			if segments and x > segStartX then
+				table.insert(segments, {x = segStartX, y = segStartY, width = x - segStartX})
+			end
+			y = y + h
+			x = 0
+			segStartX, segStartY = x, y
+		end
+
+		table.insert(draws, {txt = word, x = x, y = y})
+		x = x + w
+
+		if x + sw <= contentWidth then
+			table.insert(draws, {txt = " ", x = x, y = y})
+			x = x + sw
+		end
+	end
+
+	-- Final segment (trim trailing space)
+	if segments and x > segStartX then
+		local trailingSpace = font:getTextWidth(" ")
+		local segWidth = x - segStartX - trailingSpace
+		if segWidth > 0 then
+			table.insert(segments, {x = segStartX, y = segStartY, width = segWidth})
+		end
+	end
+
+	return x, y, draws, segments
+end
+
 -- Layout fragments from cmark parser
 -- fragments: array of {type="text"|"link", text=string, url=string (for links)}
 -- Returns: toDraw commands, contentHeight, and populates page.links
@@ -439,101 +471,40 @@ function layoutFragments(fragments)
 	local h = fnt:getHeight()
 	local x, y = 0, 0
 	local toDraw = {}
-	local linkNum = 0  -- Counter for link IDs
-
 	for _, frag in ipairs(fragments) do
 		local text = frag.text or ""
 
 		if frag.type == "link" then
-			-- Link fragment - track segments for hit detection
-			linkNum = linkNum + 1
-			local linkStartX, linkStartY = x, y
-			local linkSegments = {}
-			local linkText = text
+			-- Link fragment - use shared layout with segment tracking
+			local draws, segments
+			x, y, draws, segments = layoutWords(text, x, y, fnt, page.contentWidth, true)
 
-			-- Process link text word by word
-			for word in string.gmatch(text, "%S+") do
-				local w = fnt:getTextWidth(word)
-				local sw = fnt:getTextWidth(" ")
-
-				-- Check if word fits on current line
-				if x > 0 and x + w > page.contentWidth then
-					-- Save current segment before wrapping (if any content)
-					if x > linkStartX then
-						table.insert(linkSegments, {
-							x = linkStartX,
-							y = linkStartY,
-							width = x - linkStartX
-						})
-					end
-					-- Wrap to next line
-					y = y + h
-					x = 0
-					linkStartX, linkStartY = x, y
-				end
-
-				table.insert(toDraw, {txt = word, x = x, y = y})
-				x = x + w
-
-				-- Add space after word (within link)
-				if x + sw <= page.contentWidth then
-					table.insert(toDraw, {txt = " ", x = x, y = y})
-					x = x + sw
-				end
-			end
-
-			-- Save final segment
-			if x > linkStartX then
-				-- Remove trailing space from segment width
-				local trailingSpace = fnt:getTextWidth(" ")
-				local segWidth = x - linkStartX - trailingSpace
-				if segWidth > 0 then
-					table.insert(linkSegments, {
-						x = linkStartX,
-						y = linkStartY,
-						width = segWidth
-					})
-				end
+			for _, d in ipairs(draws) do
+				table.insert(toDraw, d)
 			end
 
 			-- Create link sprite if we have segments
-			if #linkSegments > 0 then
+			if segments and #segments > 0 then
 				local success, link = pcall(function()
-					return Link(linkText, frag.url, linkNum, linkSegments, fnt, page.padding)
+					return Link(frag.url, segments, fnt, page.padding)
 				end)
 
 				if success then
 					link:add()
 					table.insert(page.links, link)
 				else
-					print("Failed to create link:", linkText, "error:", link)
+					print("Failed to create link:", text, "error:", link)
 				end
 			end
 
 		else
-			-- Text fragment - process character by character for proper wrapping
-			-- Handle newlines and word wrapping
+			-- Text fragment - handle newlines and word wrapping
 			for line in string.gmatch(text .. "\n", "([^\n]*)\n") do
 				if line ~= "" then
-					-- Process line word by word
-					for word in string.gmatch(line, "%S+") do
-						local w = fnt:getTextWidth(word)
-						local sw = fnt:getTextWidth(" ")
-
-						-- Check if word fits on current line
-						if x > 0 and x + w > page.contentWidth then
-							y = y + h
-							x = 0
-						end
-
-						table.insert(toDraw, {txt = word, x = x, y = y})
-						x = x + w
-
-						-- Add space after word
-						if x + sw <= page.contentWidth then
-							table.insert(toDraw, {txt = " ", x = x, y = y})
-							x = x + sw
-						end
+					local draws
+					x, y, draws = layoutWords(line, x, y, fnt, page.contentWidth, false)
+					for _, d in ipairs(draws) do
+						table.insert(toDraw, d)
 					end
 				end
 				-- Move to next line after each \n
