@@ -196,16 +196,17 @@ cursor:updateImage()  -- Set initial cursor image
 class('Link').extends(gfx.sprite)
 
 function Link:init(url, segments, font, padding)
-	-- Calculate bounding box from all segments first
+	-- Calculate bounding box from all segments
 	local minX = math.huge
 	local minY = math.huge
 	local maxX = -math.huge
 	local maxY = -math.huge
 
 	for _, seg in ipairs(segments) do
+		local w = font:getTextWidth(seg.text)
 		minX = math.min(minX, seg.x)
 		minY = math.min(minY, seg.y)
-		maxX = math.max(maxX, seg.x + seg.width)
+		maxX = math.max(maxX, seg.x + w)
 		maxY = math.max(maxY, seg.y)
 	end
 
@@ -220,15 +221,12 @@ function Link:init(url, segments, font, padding)
 	Link.super.init(self)
 
 	self.url = url
-	self.segments = segments  -- Array of {x, y, width}
+	self.segments = segments  -- Array of {x, y, text}
 	self.font = font
 	self.textHeight = textHeight
-
-	-- Store offset for drawing
 	self.offsetX = minX
 	self.offsetY = minY
 
-	-- Create sprite image with collision boxes and underlines
 	local image = gfx.image.new(width, height)
 	if not image then
 		error("Failed to create link image")
@@ -239,7 +237,7 @@ function Link:init(url, segments, font, padding)
 	self:setSize(width, height)
 	self:setCenter(0, 0)
 	self:moveTo(padding + minX, padding + minY)
-	self:setZIndex(-1)  -- Behind page content
+	self:setZIndex(1)  -- Above page content (link draws its own text)
 	self:setCollideRect(0, 0, width, height)
 	self:setCollidesWithGroups({1})
 	self.collisionResponse = gfx.sprite.kCollisionTypeOverlap
@@ -247,10 +245,7 @@ function Link:init(url, segments, font, padding)
 end
 
 function Link:update()
-	-- Only called when sprite is dirty (e.g., after collision detection)
 	local isHovered = cursor:alphaCollision(self)
-
-	-- Only redraw if hover state changed
 	if isHovered ~= self.wasHovered then
 		self.wasHovered = isHovered
 		self:redrawImage(isHovered)
@@ -263,10 +258,14 @@ function Link:drawSegments(image, isHovered)
 	for _, seg in ipairs(self.segments) do
 		local localX = seg.x - self.offsetX
 		local localY = seg.y - self.offsetY
+		local w = self.font:getTextWidth(seg.text)
 
-		-- Draw white collision box
+		-- Draw white background (for collision detection)
 		gfx.setColor(gfx.kColorWhite)
-		gfx.fillRect(localX, localY, seg.width, self.textHeight)
+		gfx.fillRect(localX, localY, w, self.textHeight)
+
+		-- Draw text
+		self.font:drawText(seg.text, localX, localY)
 
 		-- Draw underline (thick if hovered)
 		gfx.setColor(gfx.kColorBlack)
@@ -274,7 +273,7 @@ function Link:drawSegments(image, isHovered)
 			gfx.setLineWidth(2)
 		end
 		gfx.drawLine(localX, localY + self.textHeight - 2,
-		             localX + seg.width, localY + self.textHeight - 2)
+		             localX + w, localY + self.textHeight - 2)
 		if isHovered then
 			gfx.setLineWidth(1)
 		end
@@ -381,55 +380,41 @@ end
 
 -- Shared word-wrapping function for both plain text and links
 -- Returns: newX, newY, draws array, segments array (if trackSegments)
-local function layoutWords(text, x, y, font, contentWidth, trackSegments)
-	local draws = {}
-	local segments = trackSegments and {} or nil
+local function layoutWords(text, x, y, font, contentWidth)
+	local segments = {}
 	local h = font:getHeight()
 	local sw = font:getTextWidth(" ")
-	local segStartX, segStartY, segEndX = x, y, x
 	local pos = 1
 
 	while pos <= #text do
-		-- Check for space
 		if string.sub(text, pos, pos) == " " then
 			if x + sw <= contentWidth then
 				x = x + sw
 			end
 			pos = pos + 1
 		else
-			-- Find word boundary
 			local wordEnd = string.find(text, " ", pos) or #text + 1
 			local word = string.sub(text, pos, wordEnd - 1)
 			local w = font:getTextWidth(word)
 
 			-- Wrap if needed
 			if x > 0 and x + w > contentWidth then
-				if segments and segEndX > segStartX then
-					table.insert(segments, {x = segStartX, y = segStartY, width = segEndX - segStartX})
-				end
 				y = y + h
 				x = 0
-				segStartX, segStartY, segEndX = x, y, x
 			end
 
-			table.insert(draws, {txt = word, x = x, y = y})
+			table.insert(segments, {x = x, y = y, text = word})
 			x = x + w
-			segEndX = x
 			pos = wordEnd
 		end
 	end
 
-	-- Final segment
-	if segments and segEndX > segStartX then
-		table.insert(segments, {x = segStartX, y = segStartY, width = segEndX - segStartX})
-	end
-
-	return x, y, draws, segments
+	return x, y, segments
 end
 
 -- Layout fragments from cmark parser
 -- fragments: array of {type="text"|"link"|"break", text=string, url=string (for links)}
--- Returns: toDraw commands, contentHeight, and populates page.links
+-- Returns: toDraw segments, contentHeight, and populates page.links
 function layoutFragments(fragments)
 	local h = fnt:getHeight()
 	local x, y = 0, 0
@@ -440,20 +425,20 @@ function layoutFragments(fragments)
 			x = 0
 			y = y + h * 2  -- blank line between paragraphs
 		elseif frag.type == "link" then
-			local draws, segments
-			x, y, draws, segments = layoutWords(frag.text, x, y, fnt, page.contentWidth, true)
-			for _, d in ipairs(draws) do table.insert(toDraw, d) end
-			if segments and #segments > 0 then
+			local segments
+			x, y, segments = layoutWords(frag.text, x, y, fnt, page.contentWidth)
+			if #segments > 0 then
 				local success, link = pcall(Link, frag.url, segments, fnt, page.padding)
 				if success then
 					link:add()
 					table.insert(page.links, link)
 				end
 			end
+			-- Links draw their own text, so don't add to toDraw
 		else -- text
-			local draws
-			x, y, draws = layoutWords(frag.text, x, y, fnt, page.contentWidth, false)
-			for _, d in ipairs(draws) do table.insert(toDraw, d) end
+			local segments
+			x, y, segments = layoutWords(frag.text, x, y, fnt, page.contentWidth)
+			for _, seg in ipairs(segments) do table.insert(toDraw, seg) end
 		end
 	end
 
@@ -467,10 +452,8 @@ function renderPageImage(toDraw, pageHeight)
 	end
 
 	gfx.pushContext(pageImage)
-	for _, cmd in ipairs(toDraw) do
-		if cmd and cmd.txt then
-			fnt:drawText(cmd.txt, page.padding + cmd.x, page.padding + cmd.y)
-		end
+	for _, seg in ipairs(toDraw) do
+		fnt:drawText(seg.text, page.padding + seg.x, page.padding + seg.y)
 	end
 	gfx.popContext()
 
