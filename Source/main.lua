@@ -25,69 +25,64 @@ local scroll = {
 	duration = 400
 }
 
--- History stack for back navigation
-local history = {}
-local currentURL = nil
+-- Navigation state
+local nav = {
+	history = {},
+	currentURL = nil,
+	pending = false,
+	buffer = "",
+	initialPageLoaded = false,
+}
 
--- HTTP request state
-local httpPending = false
-local httpBuffer = ""
+-- Forward declaration (defined after render)
+local menu
 
 -- Favorites
-local favoritesFile = "favorites"
-local favorites = {} -- table of {url=, title=}
+local favorites = {
+	file = "favorites",
+	items = {},  -- array of {url=, title=}
+}
 
-function loadFavorites()
-	local data = playdate.datastore.read(favoritesFile)
-	if data then
-		favorites = data
-	else
-		favorites = {}
-	end
+function favorites:load()
+	self.items = playdate.datastore.read(self.file) or {}
 end
 
-function saveFavorites()
-	playdate.datastore.write(favorites, favoritesFile)
+function favorites:save()
+	playdate.datastore.write(self.items, self.file)
 end
 
-function isFavorited(url)
-	for _, fav in ipairs(favorites) do
-		if fav.url == url then
-			return true
-		end
+function favorites:contains(url)
+	for _, fav in ipairs(self.items) do
+		if fav.url == url then return true end
 	end
 	return false
 end
 
-function addFavorite(url, title)
-	if not isFavorited(url) then
-		table.insert(favorites, {url = url, title = title})
-		saveFavorites()
+function favorites:add(url, title)
+	if not self:contains(url) then
+		table.insert(self.items, {url = url, title = title})
+		self:save()
 	end
 end
 
-function removeFavorite(url)
-	for i, fav in ipairs(favorites) do
+function favorites:remove(url)
+	for i, fav in ipairs(self.items) do
 		if fav.url == url then
-			table.remove(favorites, i)
-			saveFavorites()
+			table.remove(self.items, i)
+			self:save()
 			return
 		end
 	end
 end
 
-function getTitleFromURL(url)
-	-- Extract a simple title from URL
+function favorites:getTitleFromURL(url)
 	local host = string.match(url, "^https?://([^/]+)")
 	local path = string.match(url, "^https?://[^/]+(.*)") or "/"
 	if path == "/" or path == "" then
 		return host or url
 	end
-	-- Use last path segment as title
 	local segment = string.match(path, "/([^/]+)$") or path
-	-- Remove file extension
-	segment = string.gsub(segment, "%.%w+$", "")
-	return segment
+	return string.gsub(segment, "%.%w+$", "")
 end
 
 -- Viewport
@@ -299,87 +294,72 @@ end
 
 -- url = nil means go back in history
 function fetchPage(url)
-	if httpPending then
-		return
-	end
+	if nav.pending then return end
 
 	if url then
-		if currentURL then
-			table.insert(history, currentURL)
+		if nav.currentURL then
+			table.insert(nav.history, nav.currentURL)
 		end
 	else
-		url = table.remove(history)
-		if not url then
-			return
-		end
+		url = table.remove(nav.history)
+		if not url then return end
 	end
 
-	httpPending = true
-	httpBuffer = ""
-
-	-- Start cursor blinking to indicate loading
+	nav.pending = true
+	nav.buffer = ""
 	cursor.blinker:start()
 
-	-- Parse URL and create HTTP connection
 	local host, port, secure, path = parseURL(url)
-	local httpConn = net.http.new(host, port, secure, "ORBIT")
-
-	if not httpConn then
-		httpPending = false
+	local conn = net.http.new(host, port, secure, "ORBIT")
+	if not conn then
+		nav.pending = false
 		return
 	end
 
-	httpConn:setConnectTimeout(10)
+	conn:setConnectTimeout(10)
 
-	-- Callback to receive data chunks
-	httpConn:setRequestCallback(function()
-		local bytes = httpConn:getBytesAvailable()
+	conn:setRequestCallback(function()
+		local bytes = conn:getBytesAvailable()
 		if bytes > 0 then
-			local chunk = httpConn:read(bytes)
+			local chunk = conn:read(bytes)
 			if chunk then
-				httpBuffer = httpBuffer .. chunk
+				nav.buffer = nav.buffer .. chunk
 			end
 		end
 	end)
 
-	-- Callback when request completes
-	httpConn:setRequestCompleteCallback(function()
-		local err = httpConn:getError()
+	conn:setRequestCompleteCallback(function()
+		local err = conn:getError()
 		if err and err ~= "Connection closed" then
-			httpPending = false
+			nav.pending = false
 			return
 		end
 
-		local success = pcall(render, httpBuffer)
+		local success = pcall(render, nav.buffer)
 		if not success then
-			httpPending = false
+			nav.pending = false
 			return
 		end
 
-		currentURL = url
-		updateFavoriteCheckmark()
-
-		httpPending = false
+		nav.currentURL = url
+		menu:updateCheckmark()
+		nav.pending = false
 		cursor.blinker:stop()
-		cursor.on = true
 		cursor:updateImage()
 	end)
 
-	-- Start the request
-	httpConn:get(path)
+	conn:get(path)
 end
 
-function cleanupLinks()
-	for _, link in ipairs(page.links) do
-		if link then
-			link:remove()
-		end
+function page:cleanupLinks()
+	for _, link in ipairs(self.links) do
+		if link then link:remove() end
 	end
-	page.links = {}
+	self.links = {}
 end
 
--- Shared word-wrapping function for both plain text and links
--- Returns: newX, newY, draws array, segments array (if trackSegments)
+-- Word-wrapping layout function
+-- Returns: newX, newY, segments array of {x, y, text}
 local function layoutWords(text, x, y, font, contentWidth)
 	local segments = {}
 	local h = font:getHeight()
@@ -413,7 +393,7 @@ local function layoutWords(text, x, y, font, contentWidth)
 end
 
 function render(text)
-	cleanupLinks()
+	page:cleanupLinks()
 	viewport.top = 0
 
 	local fragments = json.decode(cmark.parse(text)) or {}
@@ -457,39 +437,33 @@ function render(text)
 	page:moveTo(0, 0)
 end
 
--- load homepage when app starts
-local initialPageLoaded = false
+-- Menu setup
+menu = {
+	handle = playdate.getSystemMenu(),
+	checkmark = nil,
+	options = nil,
+}
 
--- setup menu
-local menu = playdate.getSystemMenu()
-local favoriteCheckmark = nil
-local favoritesOptions = nil
-
-function updateFavoriteCheckmark()
-	local isChecked = currentURL and isFavorited(currentURL)
-	if favoriteCheckmark then
-		favoriteCheckmark:setValue(isChecked)
+function menu:updateCheckmark()
+	if self.checkmark then
+		self.checkmark:setValue(nav.currentURL and favorites:contains(nav.currentURL))
 	end
 end
 
-function updateFavoritesOptions()
-	-- Remove old options menu item if it exists
-	if favoritesOptions then
-		menu:removeMenuItem(favoritesOptions)
-		favoritesOptions = nil
+function menu:updateOptions()
+	if self.options then
+		self.handle:removeMenuItem(self.options)
+		self.options = nil
 	end
 
-	-- Only add options menu if there are at least 2 favorites
-	if #favorites >= 2 then
+	if #favorites.items >= 2 then
 		local titles = {}
-		for _, fav in ipairs(favorites) do
+		for _, fav in ipairs(favorites.items) do
 			table.insert(titles, fav.title)
 		end
-
-		favoritesOptions = menu:addOptionsMenuItem("open", titles, "tutorial", function(selectedTitle)
-			-- Find the URL for the selected title
-			for _, fav in ipairs(favorites) do
-				if fav.title == selectedTitle then
+		self.options = self.handle:addOptionsMenuItem("open", titles, "tutorial", function(title)
+			for _, fav in ipairs(favorites.items) do
+				if fav.title == title then
 					fetchPage(fav.url)
 					break
 				end
@@ -498,42 +472,35 @@ function updateFavoritesOptions()
 	end
 end
 
-favoriteCheckmark = menu:addCheckmarkMenuItem("Save", false, function(checked)
-	if currentURL then
-		if checked then
-			local title = getTitleFromURL(currentURL)
-			addFavorite(currentURL, title)
-		else
-			removeFavorite(currentURL)
+function menu:init()
+	self.checkmark = self.handle:addCheckmarkMenuItem("Save", false, function(checked)
+		if nav.currentURL then
+			if checked then
+				favorites:add(nav.currentURL, favorites:getTitleFromURL(nav.currentURL))
+			else
+				favorites:remove(nav.currentURL)
+			end
+			self:updateOptions()
 		end
-		updateFavoritesOptions()
+	end)
+
+	favorites:load()
+	if #favorites.items < 2 then
+		favorites.items = {
+			{url = "https://orbit.casa/tutorial.md", title = "tutorial"},
+			{url = "https://orbit.casa/boo.md", title = "boo"},
+		}
+		favorites:save()
 	end
-end)
-
--- Load favorites on startup
-loadFavorites()
-
--- Ensure we have at least 2 favorites for the options menu
-if #favorites < 2 then
-	-- Clear and add defaults
-	favorites = {}
-	table.insert(favorites, {url = "https://orbit.casa/tutorial.md", title = "tutorial"})
-	table.insert(favorites, {url = "https://orbit.casa/boo.md", title = "boo"})
-	saveFavorites()
+	self:updateOptions()
 end
 
-updateFavoritesOptions()
+menu:init()
 
-function playdate.update()
-
-	if not initialPageLoaded then
-		fetchPage("https://orbit.casa/tutorial.md")
-		initialPageLoaded = true
-	end
-
+local function handleNavInput()
 	-- A/RIGHT to activate links
-	if playdate.buttonJustPressed(playdate.kButtonRight) or 
-		   playdate.buttonJustPressed(playdate.kButtonA) then
+	if playdate.buttonJustPressed(playdate.kButtonRight) or
+	   playdate.buttonJustPressed(playdate.kButtonA) then
 		for _, link in ipairs(cursor:overlappingSprites()) do
 			if cursor:alphaCollision(link) then
 				fetchPage(link.url)
@@ -542,62 +509,60 @@ function playdate.update()
 		end
 	end
 
-	-- B to go back in history
+	-- B to go back
 	if playdate.buttonJustPressed(playdate.kButtonB) then
 		fetchPage(nil)
-	
 	end
+end
 
-	-- Rotate cursor if crank moves
-	if playdate.getCrankChange() ~= 0 or 
-	   cursor.blinker.running then
+local function updateCursor()
+	-- Update image if crank moved or blinking
+	if playdate.getCrankChange() ~= 0 or cursor.blinker.running then
 		cursor:updateImage()
 	end
 
-	-- UP to thrust cursor forward
+	-- Thrust with UP button
 	if playdate.buttonIsPressed(playdate.kButtonUp) then
 		cursor.speed = math.min(cursor.maxSpeed, cursor.speed + cursor.thrust)
 	else
 		cursor.speed = cursor.speed * cursor.friction
 	end
 
-	if cursor.speed ~= 0 then
-		local radians = math.rad(playdate.getCrankPosition() - 90)  -- Adjust for 0° being up
-		local vx = math.cos(radians) * cursor.speed
-		local vy = math.sin(radians) * cursor.speed
+	if cursor.speed == 0 then return end
 
-		local screenX, screenY = cursor:getPosition()
-		local targetScreenX = (screenX + vx) % SCREEN_WIDTH
-		local targetScreenY = screenY + vy
+	local radians = math.rad(playdate.getCrankPosition() - 90)
+	local vx = math.cos(radians) * cursor.speed
+	local vy = math.sin(radians) * cursor.speed
 
-		-- Scroll page when cursor at screen edge and more content exists
-		if targetScreenY <= 0 and viewport.top > 0 then
-			local scrollAmount = math.min(viewport.top, -targetScreenY)
-			viewport:moveTo(viewport.top - scrollAmount)
-		elseif targetScreenY >= SCREEN_HEIGHT and viewport.top + SCREEN_HEIGHT < page.height then
-			local scrollAmount = math.min(page.height - SCREEN_HEIGHT - viewport.top, targetScreenY - SCREEN_HEIGHT)
-			viewport:moveTo(viewport.top + scrollAmount)
-		end
+	local screenX, screenY = cursor:getPosition()
+	local targetX = (screenX + vx) % SCREEN_WIDTH
+	local targetY = screenY + vy
 
-		-- Clamp cursor to screen bounds
-		local clampedScreenY = math.max(0, math.min(SCREEN_HEIGHT, targetScreenY))
-
-		local _, _, collisions, _ = cursor:moveWithCollisions(targetScreenX, clampedScreenY)
-		for _, collision in ipairs(collisions) do
-			collision.other:markDirty()
-		end
+	-- Auto-scroll at screen edges
+	if targetY <= 0 and viewport.top > 0 then
+		viewport:moveTo(viewport.top - math.min(viewport.top, -targetY))
+	elseif targetY >= SCREEN_HEIGHT and viewport.top + SCREEN_HEIGHT < page.height then
+		local maxScroll = page.height - SCREEN_HEIGHT - viewport.top
+		viewport:moveTo(viewport.top + math.min(maxScroll, targetY - SCREEN_HEIGHT))
 	end
 
-	-- Scrolling page with D pad
+	-- Move cursor (clamped to screen)
+	local clampedY = math.max(0, math.min(SCREEN_HEIGHT, targetY))
+	local _, _, collisions = cursor:moveWithCollisions(targetX, clampedY)
+	for _, c in ipairs(collisions) do
+		c.other:markDirty()
+	end
+end
+
+local function updateScroll()
+	-- D-pad scrolling
 	if playdate.buttonJustPressed(playdate.kButtonDown) then
 		local maxTop = math.max(page.height - SCREEN_HEIGHT, 0)
-		local targetTop = math.min(maxTop, viewport.top + scroll.distance)
-
-		scroll.animator = gfx.animator.new(scroll.duration, viewport.top, targetTop, scroll.easing)
+		scroll.animator = gfx.animator.new(scroll.duration, viewport.top,
+			math.min(maxTop, viewport.top + scroll.distance), scroll.easing)
 	elseif playdate.buttonJustPressed(playdate.kButtonLeft) then
-		local targetTop = math.max(0, viewport.top - scroll.distance)
-
-		scroll.animator = gfx.animator.new(scroll.duration, viewport.top, targetTop, scroll.easing)
+		scroll.animator = gfx.animator.new(scroll.duration, viewport.top,
+			math.max(0, viewport.top - scroll.distance), scroll.easing)
 	end
 
 	if scroll.animator then
@@ -606,6 +571,17 @@ function playdate.update()
 			scroll.animator = nil
 		end
 	end
+end
+
+function playdate.update()
+	if not nav.initialPageLoaded then
+		fetchPage("https://orbit.casa/tutorial.md")
+		nav.initialPageLoaded = true
+	end
+
+	handleNavInput()
+	updateCursor()
+	updateScroll()
 
 	gfx.sprite.update()
 	gfx.animation.blinker.updateAll()
