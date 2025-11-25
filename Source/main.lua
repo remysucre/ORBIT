@@ -18,8 +18,6 @@ local CURSOR_SIZE = 25
 local CURSOR_COLLISION_RECT = {x = 8, y = 8, w = 9, h = 9}
 local CURSOR_ZINDEX = 32767
 
-local MESSAGE_RECT = {x = 20, y = 100, w = 360, h = 140}
-
 local PAGE_PADDING = 10
 
 -- D-pad scrolling
@@ -34,8 +32,9 @@ local scroll = {
 local history = {}
 local currentURL = nil
 
--- HTTP request data buffer
-local httpData = nil
+-- HTTP request state
+local httpPending = false
+local httpBuffer = ""
 
 -- Favorites
 local favoritesFile = "favorites"
@@ -93,18 +92,6 @@ function getTitleFromURL(url)
 	segment = string.gsub(segment, "%.%w+$", "")
 	return segment
 end
-
--- -- Utility: Display a message on screen
--- function showMessage(message)
--- 	-- playdate.stop()
--- 	-- gfx.clear()
--- 	-- gfx.setDrawOffset(0, 0)
--- 	local img = gfx.imageWithText(message, MESSAGE_RECT.w, MESSAGE_RECT.h,
--- 	                                  gfx.kTextAlignment.center)
--- 	img:drawIgnoringOffset(MESSAGE_RECT.x, MESSAGE_RECT.y)
--- 	-- playdate.display.flush()
--- end
-
 
 -- Viewport
 local viewport = {
@@ -249,24 +236,7 @@ function Link:init(url, segments, font, padding)
 		error("Failed to create link image")
 	end
 
-	gfx.pushContext(image)
-
-	for _, seg in ipairs(segments) do
-		local localX = seg.x - minX
-		local localY = seg.y - minY
-
-		-- Draw white collision box
-		gfx.setColor(gfx.kColorWhite)
-		gfx.fillRect(localX, localY, seg.width, self.textHeight)
-
-		-- Draw black underline
-		gfx.setColor(gfx.kColorBlack)
-		gfx.drawLine(localX, localY + self.textHeight - 2,
-		             localX + seg.width, localY + self.textHeight - 2)
-	end
-
-	gfx.popContext()
-
+	self:drawSegments(image, false)
 	self:setImage(image)
 	self:setSize(width, height)
 	self:setCenter(0, 0)
@@ -289,11 +259,7 @@ function Link:update()
 	end
 end
 
-function Link:redrawImage(isHovered)
-	local width = self:getSize()
-	local height = select(2, self:getSize())
-
-	local image = gfx.image.new(width, height, gfx.kColorClear)
+function Link:drawSegments(image, isHovered)
 	gfx.pushContext(image)
 
 	for _, seg in ipairs(self.segments) do
@@ -304,7 +270,7 @@ function Link:redrawImage(isHovered)
 		gfx.setColor(gfx.kColorWhite)
 		gfx.fillRect(localX, localY, seg.width, self.textHeight)
 
-		-- Draw underline (thick if hovered, thin otherwise)
+		-- Draw underline (thick if hovered)
 		gfx.setColor(gfx.kColorBlack)
 		if isHovered then
 			gfx.setLineWidth(2)
@@ -317,6 +283,12 @@ function Link:redrawImage(isHovered)
 	end
 
 	gfx.popContext()
+end
+
+function Link:redrawImage(isHovered)
+	local width, height = self:getSize()
+	local image = gfx.image.new(width, height, gfx.kColorClear)
+	self:drawSegments(image, isHovered)
 	self:setImage(image)
 end
 
@@ -330,9 +302,7 @@ end
 
 -- url = nil means go back in history
 function fetchPage(url)
-
-	if httpData then
-		-- A request is already in progress
+	if httpPending then
 		return
 	end
 
@@ -340,17 +310,15 @@ function fetchPage(url)
 		if currentURL then
 			table.insert(history, currentURL)
 		end
-	else -- Go back in history
+	else
 		url = table.remove(history)
 		if not url then
-			-- No history to go back to
 			return
 		end
 	end
 
-	-- Show loading message and set loading state
-	-- showMessage("Loading...")
-	httpData = ""
+	httpPending = true
+	httpBuffer = ""
 
 	-- Start cursor blinking to indicate loading
 	cursor.blinker:start()
@@ -360,8 +328,7 @@ function fetchPage(url)
 	local httpConn = net.http.new(host, port, secure, "ORBIT")
 
 	if not httpConn then
-		-- showMessage("Error: Network access denied")
-		httpData = nil
+		httpPending = false
 		return
 	end
 
@@ -373,36 +340,29 @@ function fetchPage(url)
 		if bytes > 0 then
 			local chunk = httpConn:read(bytes)
 			if chunk then
-				httpData = httpData .. chunk
+				httpBuffer = httpBuffer .. chunk
 			end
 		end
 	end)
 
 	-- Callback when request completes
 	httpConn:setRequestCompleteCallback(function()
-
-		-- Check for errors
 		local err = httpConn:getError()
 		if err and err ~= "Connection closed" then
-			-- showMessage("Error: " .. err)
-			httpData = nil
+			httpPending = false
 			return
 		end
 
-		-- Render the page
-		local success, renderErr = pcall(render, httpData)
+		local success = pcall(render, httpBuffer)
 		if not success then
-			-- showMessage("Failed to render page: " .. tostring(renderErr))
-			httpData = nil
+			httpPending = false
 			return
 		end
 
-		-- Update current URL after successful render
 		currentURL = url
 		updateFavoriteCheckmark()
 
-		-- Clear loading state
-		httpData = nil
+		httpPending = false
 		cursor.blinker:stop()
 		cursor.on = true
 		cursor:updateImage()
@@ -492,8 +452,6 @@ function layoutFragments(fragments)
 				if success then
 					link:add()
 					table.insert(page.links, link)
-				else
-					print("Failed to create link:", text, "error:", link)
 				end
 			end
 
