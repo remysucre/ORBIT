@@ -2,7 +2,7 @@ Welcome to ORBIT, a web browser for Playdate!
 
 ![ORBIT demo](demo.gif)
 
-Follow [instructions](https://help.play.date/games/sideloading/) to upload [`ORBIT.pdx`](ORBIT.pdx.zip) to your device.
+Follow [instructions](https://help.play.date/games/sideloading/) to upload [`ORBIT.pdx`](orbit.casa/ORBIT.pdx.zip) to your device.
 
 **CONTROLS**
 
