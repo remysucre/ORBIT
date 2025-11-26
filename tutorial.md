@@ -2,10 +2,7 @@ WELCOME TO HYPERSPACE
 
 Here's your cursor: 
 
-CRANK......to steer
-UP.........to accelerate
-RIGHT/A....to follow [link](https://orbit.casa/back.md)
-DOWN/LEFT..to scroll 1 page
+CRANK to steer, UP to accelerate, RIGHT/A to follow [link](https://orbit.casa/back.md), DOWN/LEFT to scroll a full page
 
 Open the menu to save pages; closing the menu loads the selected "open" page.
 
