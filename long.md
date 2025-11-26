@@ -1,6 +1,6 @@
 This is a test of multi-word links.
 
-Here is a [single word link][1] that should work as before.
+Here is a single word [link][1] that should work as before.
 
 Here is a [multi word link][2] that should now work correctly.
 

@@ -10,4 +10,4 @@ Add more saved pages by editing the game file using your computer.
 
 Currently a minimal subset of markdown (plain text and links only) is supported.
 
-Add your page to the [directory](https://orbit.casa/back.md) by opening a PR to github.com/remysucre/ORBIT!
+Add your page to the [directory](https://orbit.casa/directory.md) by opening a PR to github.com/remysucre/ORBIT!

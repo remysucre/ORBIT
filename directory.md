@@ -6,4 +6,4 @@ WELCOME TO HYPERSPACE
 
 [back](https://orbit.casa/back.md)
 
-[long link test](https://orbit.casa/back.md)
+[long link test](https://orbit.casa/long.md)
