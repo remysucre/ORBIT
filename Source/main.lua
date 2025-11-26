@@ -253,10 +253,10 @@ function Link:init(url, segments, font, padding)
 	local maxY = -math.huge
 
 	for _, seg in ipairs(segments) do
-		local w = font:getTextWidth(seg.text)
+		seg.w = font:getTextWidth(seg.text)
 		minX = math.min(minX, seg.x)
 		minY = math.min(minY, seg.y)
-		maxX = math.max(maxX, seg.x + w)
+		maxX = math.max(maxX, seg.x + seg.w)
 		maxY = math.max(maxY, seg.y)
 	end
 
@@ -271,8 +271,7 @@ function Link:init(url, segments, font, padding)
 	Link.super.init(self)
 
 	self.url = url
-	self.segments = segments  -- Array of {x, y, text}
-	self.font = font
+	self.segments = segments  -- Array of {x, y, text, w}
 	self.textHeight = textHeight
 	self.offsetX = minX
 	self.offsetY = minY
@@ -287,7 +286,7 @@ function Link:init(url, segments, font, padding)
 	self:setSize(width, height)
 	self:setCenter(0, 0)
 	self:moveTo(padding + minX, padding + minY)
-	self:setZIndex(1)  -- Above page content (link draws its own text)
+	self:setZIndex(-1)  -- Below page content (page draws the text)
 	self:setCollideRect(0, 0, width, height)
 	self:setCollidesWithGroups({1})
 	self.collisionResponse = gfx.sprite.kCollisionTypeOverlap
@@ -308,14 +307,10 @@ function Link:drawSegments(image, isHovered)
 	for _, seg in ipairs(self.segments) do
 		local localX = seg.x - self.offsetX
 		local localY = seg.y - self.offsetY
-		local w = self.font:getTextWidth(seg.text)
 
 		-- Draw white background (for collision detection)
 		gfx.setColor(gfx.kColorWhite)
-		gfx.fillRect(localX, localY, w, self.textHeight)
-
-		-- Draw text
-		self.font:drawText(seg.text, localX, localY)
+		gfx.fillRect(localX, localY, seg.w, self.textHeight)
 
 		-- Draw underline (thick if hovered)
 		gfx.setColor(gfx.kColorBlack)
@@ -323,7 +318,7 @@ function Link:drawSegments(image, isHovered)
 			gfx.setLineWidth(2)
 		end
 		gfx.drawLine(localX, localY + self.textHeight - 2,
-		             localX + w, localY + self.textHeight - 2)
+		             localX + seg.w, localY + self.textHeight - 2)
 		if isHovered then
 			gfx.setLineWidth(1)
 		end
@@ -455,7 +450,7 @@ function render(text)
 	local h = fnt:getHeight()
 	local textSegments = {}
 
-	-- Layout pass: create links, buffer text segments
+	-- Layout pass: create links, buffer text segments (including link text)
 	local x, y = 0, 0
 	for _, frag in ipairs(fragments) do
 		if frag.type == "break" then
@@ -469,17 +464,17 @@ function render(text)
 					link:add()
 					table.insert(page.links, link)
 				end
-			else
-				for _, seg in ipairs(segments) do
-					table.insert(textSegments, seg)
-				end
+			end
+			-- Add all segments (both plain text and links) to textSegments
+			for _, seg in ipairs(segments) do
+				table.insert(textSegments, seg)
 			end
 		end
 	end
 
-	-- Create image and draw text
+	-- Create image with clear background and draw all text
 	page.height = math.max(SCREEN_HEIGHT, y + h + 2 * page.padding)
-	local pageImage = gfx.image.new(page.width, page.height)
+	local pageImage = gfx.image.new(page.width, page.height, gfx.kColorClear)
 	if not pageImage then return end
 
 	gfx.pushContext(pageImage)
