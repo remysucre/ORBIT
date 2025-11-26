@@ -312,6 +312,8 @@ end
 function Link:drawSegments(image, isHovered)
 	gfx.pushContext(image)
 
+	-- Group segments by Y position for continuous underlines per line
+	local lineGroups = {}
 	for _, seg in ipairs(self.segments) do
 		local localX = seg.x - self.offsetX
 		local localY = seg.y - self.offsetY
@@ -320,16 +322,26 @@ function Link:drawSegments(image, isHovered)
 		gfx.setColor(gfx.kColorWhite)
 		gfx.fillRect(localX, localY, seg.w, self.textHeight)
 
-		-- Draw underline (thick if hovered)
-		gfx.setColor(gfx.kColorBlack)
-		if isHovered then
-			gfx.setLineWidth(2)
+		-- Group by Y for underline drawing
+		if not lineGroups[localY] then
+			lineGroups[localY] = {minX = localX, maxX = localX + seg.w}
+		else
+			lineGroups[localY].minX = math.min(lineGroups[localY].minX, localX)
+			lineGroups[localY].maxX = math.max(lineGroups[localY].maxX, localX + seg.w)
 		end
-		gfx.drawLine(localX, localY + self.textHeight - 2,
-		             localX + seg.w, localY + self.textHeight - 2)
-		if isHovered then
-			gfx.setLineWidth(1)
-		end
+	end
+
+	-- Draw one continuous underline per line
+	gfx.setColor(gfx.kColorBlack)
+	if isHovered then
+		gfx.setLineWidth(2)
+	end
+	for y, line in pairs(lineGroups) do
+		gfx.drawLine(line.minX, y + self.textHeight - 2,
+		             line.maxX, y + self.textHeight - 2)
+	end
+	if isHovered then
+		gfx.setLineWidth(1)
 	end
 
 	gfx.popContext()
