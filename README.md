@@ -11,12 +11,9 @@ Follow [instructions](https://help.play.date/games/sideloading/) to upload [`ORB
 - LEFT/DOWN to scroll up/down by 1 page
 - RIGHT to activate link (when hovering)
 
-**CONTENT FORMAT**
-
-ORBIT uses the [md0 format](https://md0.fyi) for page content - a simple plain text format inspired by Markdown.
-
 **ACKNOWLEDGEMENT**
 
 ORBIT took inspiration from [HYPER METEOR](https://play.date/games/hyper-meteor/)
 and the [Constellation Browser](https://particlestudios.itch.io/constellation-browser).
 The font used is [SYSTEM6](https://mmedal.itch.io/system6-playdate-font) created by [mmedal](https://mmedal.itch.io).
+Markdown parsing is done with [cmark](https://github.com/commonmark/cmark).
