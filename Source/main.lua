@@ -420,93 +420,27 @@ function page:cleanupLinks()
 	self.links = {}
 end
 
--- Word-wrapping layout function
--- Returns: newX, newY, segments array of {x, y, text}
-local function layoutWords(text, x, y, font, contentWidth)
-	local segments = {}
-	local h = font:getHeight()
-	local sw = font:getTextWidth(" ")
-	local tracking = font:getTracking()
-	local pos = 1
-
-	local segment = ""
-	local segX, segY = x, y
-
-	while pos <= #text do
-		if string.sub(text, pos, pos) == " " then
-			if x + sw <= contentWidth then
-				x = x + sw + tracking
-				segment = segment .. " "
-			end
-			pos = pos + 1
-		else
-			local wordEnd = string.find(text, " ", pos) or #text + 1
-			local word = string.sub(text, pos, wordEnd - 1)
-			local w = font:getTextWidth(word)
-
-			-- Wrap if needed
-			if x > 0 and x + w > contentWidth then
-				table.insert(segments, {x = segX, y = segY, text = segment})
-				y = y + h
-				x = 0
-				segment = ""
-				segX, segY = x, y
-			end
-
-			x = x + w + tracking
-			segment = segment .. word
-			pos = wordEnd
-		end
-	end
-
-	table.insert(segments, {x = segX, y = segY, text = segment})
-
-	return x, y, segments
-end
-
+-- Render using Clay C library
 function render(text)
 	page:cleanupLinks()
 	viewport.top = 0
 
-	local fragments = json.decode(cmark.parse(text)) or {}
-	local h = fnt:getHeight()
-	local textSegments = {}
-
-	-- Layout pass: create links, buffer text segments (including link text)
-	local x, y = 0, 0
-	for _, frag in ipairs(fragments) do
-		if frag.type == "break" then
-			x, y = 0, y + h * 2
-		else
-			local segments
-			x, y, segments = layoutWords(frag.text, x, y, fnt, page.contentWidth)
-			if frag.type == "link" then
-				local success, link = pcall(Link, frag.url, segments, fnt, page.padding)
-				if success then
-					link:add()
-					table.insert(page.links, link)
-				end
-			end
-			-- Add all segments (both plain text and links) to textSegments
-			for _, seg in ipairs(segments) do
-				table.insert(textSegments, seg)
-			end
-		end
+	-- Call C render function
+	local bitmap, pageHeight, linkCount = clay.render(text)
+	if not bitmap then
+		print("clay.render returned nil")
+		return
 	end
 
-	-- Create image with clear background and draw all text
-	page.height = math.max(SCREEN_HEIGHT, y + h + 2 * page.padding)
-	local pageImage = gfx.image.new(page.width, page.height, gfx.kColorClear)
-	if not pageImage then return end
-
-	gfx.pushContext(pageImage)
-	for _, seg in ipairs(textSegments) do
-		fnt:drawText(seg.text, page.padding + seg.x, page.padding + seg.y)
-	end
-	gfx.popContext()
-
-	page:setImage(pageImage)
+	-- Set page image from C-rendered bitmap
+	-- The bitmap returned from C is already a playdate.graphics.image
+	page.height = pageHeight
+	page:setImage(bitmap)
 	page:moveTo(0, 0)
+
+	-- Create Link sprites from C link data
+	-- TODO: Implement link position tracking and create Link sprites
+	-- For now, links won't be interactive but text will render
 end
 
 menu:init()
