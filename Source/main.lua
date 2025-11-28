@@ -9,6 +9,10 @@ local net = playdate.network
 local fnt = gfx.font.new("fonts/SYSTEM6")
 gfx.setFont(fnt)
 
+-- Initialize Clay layout with our font
+-- cmark.setFont will be available after the C extension loads
+local USE_CLAY_LAYOUT = true  -- Toggle to test old vs new layout
+
 local directory = "https://orbit.casa/directory.md"
 local tutorial  = "https://orbit.casa/tutorial.md"
 local back      = "https://orbit.casa/back.md"
@@ -464,7 +468,8 @@ local function layoutWords(text, x, y, font, contentWidth)
 	return x, y, segments
 end
 
-function render(text)
+-- Render using the old Lua layout (for fallback/comparison)
+function renderLegacy(text)
 	page:cleanupLinks()
 	viewport.top = 0
 
@@ -507,6 +512,72 @@ function render(text)
 
 	page:setImage(pageImage)
 	page:moveTo(0, 0)
+end
+
+-- Render using Clay layout (new C-based layout)
+function renderClay(text)
+	page:cleanupLinks()
+	viewport.top = 0
+
+	-- Get positioned elements from Clay layout
+	local elements = json.decode(cmark.layout(text, page.contentWidth, "fonts/SYSTEM6")) or {}
+	local h = fnt:getHeight()
+	local maxY = 0
+
+	-- Group link elements by URL for creating Link sprites
+	local linkGroups = {}  -- url -> array of {x, y, text, w}
+
+	for _, elem in ipairs(elements) do
+		if elem.y and elem.y > maxY then
+			maxY = elem.y
+		end
+
+		if elem.type == "link" and elem.url then
+			if not linkGroups[elem.url] then
+				linkGroups[elem.url] = {}
+			end
+			table.insert(linkGroups[elem.url], {
+				x = elem.x,
+				y = elem.y,
+				text = elem.text,
+				w = elem.w
+			})
+		end
+	end
+
+	-- Create Link sprites for each unique URL
+	for url, segments in pairs(linkGroups) do
+		local success, link = pcall(Link, url, segments, fnt, page.padding)
+		if success then
+			link:add()
+			table.insert(page.links, link)
+		end
+	end
+
+	-- Create page image and draw all text
+	page.height = math.max(SCREEN_HEIGHT, maxY + h + 2 * page.padding)
+	local pageImage = gfx.image.new(page.width, page.height, gfx.kColorClear)
+	if not pageImage then return end
+
+	gfx.pushContext(pageImage)
+	for _, elem in ipairs(elements) do
+		if elem.text and elem.x and elem.y then
+			fnt:drawText(elem.text, page.padding + elem.x, page.padding + elem.y)
+		end
+	end
+	gfx.popContext()
+
+	page:setImage(pageImage)
+	page:moveTo(0, 0)
+end
+
+-- Main render function - dispatches to appropriate renderer
+function render(text)
+	if USE_CLAY_LAYOUT and cmark.layout then
+		renderClay(text)
+	else
+		renderLegacy(text)
+	end
 end
 
 menu:init()
@@ -589,6 +660,10 @@ end
 
 function playdate.update()
 	if not nav.initialPageLoaded then
+		-- Initialize Clay font if available
+		if USE_CLAY_LAYOUT and cmark.setFont then
+			cmark.setFont("fonts/SYSTEM6")
+		end
 		fetchPage(tutorial)
 		nav.initialPageLoaded = true
 	end

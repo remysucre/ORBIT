@@ -1,6 +1,6 @@
 //
 //  main.c
-//  ORBIT - cmark markdown parser for Playdate
+//  ORBIT - cmark markdown parser + Clay layout for Playdate
 //
 
 #include <stdio.h>
@@ -9,8 +9,10 @@
 
 #include "pd_api.h"
 #include "cmark.h"
+#include "clay_layout.h"
 
 static PlaydateAPI* pd = NULL;
+static LCDFont* layout_font = NULL;
 
 // JSON output buffer
 #define MAX_JSON_SIZE 65536
@@ -220,6 +222,78 @@ static int parseMarkdown(lua_State* L) {
     return 1;
 }
 
+// Layout markdown with Clay - returns positioned elements
+// cmark.layout(markdown, contentWidth, fontPath) -> JSON
+static int layoutMarkdown(lua_State* L) {
+    (void)L;
+
+    const char* markdown = pd->lua->getArgString(1);
+    if (markdown == NULL) {
+        pd->lua->pushString("[]");
+        return 1;
+    }
+
+    // Get content width (default 380)
+    int content_width = 380;
+    if (pd->lua->getArgCount() >= 2) {
+        content_width = (int)pd->lua->getArgFloat(2);
+    }
+
+    // Get font path if provided (arg 3)
+    if (pd->lua->getArgCount() >= 3) {
+        const char* font_path = pd->lua->getArgString(3);
+        if (font_path) {
+            const char* err = NULL;
+            LCDFont* font = pd->graphics->loadFont(font_path, &err);
+            if (font) {
+                layout_font = font;
+                clay_layout_set_font(font);
+            } else if (err) {
+                pd->system->logToConsole("Font load error: %s", err);
+            }
+        }
+    }
+
+    // Ensure font is set
+    if (!layout_font) {
+        pd->system->logToConsole("No font set for layout");
+        pd->lua->pushString("[]");
+        return 1;
+    }
+
+    // Do the layout
+    const char* result = clay_layout_markdown(markdown, content_width, 0);
+    pd->lua->pushString(result);
+    return 1;
+}
+
+// Set the font for layout (without doing layout)
+// cmark.setFont(fontPath) -> boolean
+static int setLayoutFont(lua_State* L) {
+    (void)L;
+
+    const char* font_path = pd->lua->getArgString(1);
+    if (!font_path) {
+        pd->lua->pushBool(0);
+        return 1;
+    }
+
+    const char* err = NULL;
+    LCDFont* font = pd->graphics->loadFont(font_path, &err);
+    if (font) {
+        layout_font = font;
+        clay_layout_set_font(font);
+        pd->lua->pushBool(1);
+        return 1;
+    }
+
+    if (err) {
+        pd->system->logToConsole("Font load error: %s", err);
+    }
+    pd->lua->pushBool(0);
+    return 1;
+}
+
 #ifdef _WINDLL
 __declspec(dllexport)
 #endif
@@ -229,13 +303,30 @@ int eventHandler(PlaydateAPI* playdate, PDSystemEvent event, uint32_t arg) {
     if (event == kEventInitLua) {
         pd = playdate;
 
+        // Initialize Clay layout system
+        clay_layout_init(pd);
+
         const char* err;
 
-        // Register cmark.parse function
+        // Register cmark.parse function (legacy)
         if (!pd->lua->addFunction(parseMarkdown, "cmark.parse", &err)) {
             pd->system->logToConsole("Failed to register cmark.parse: %s", err);
         } else {
             pd->system->logToConsole("cmark.parse registered successfully");
+        }
+
+        // Register cmark.layout function (new Clay-based layout)
+        if (!pd->lua->addFunction(layoutMarkdown, "cmark.layout", &err)) {
+            pd->system->logToConsole("Failed to register cmark.layout: %s", err);
+        } else {
+            pd->system->logToConsole("cmark.layout registered successfully");
+        }
+
+        // Register cmark.setFont function
+        if (!pd->lua->addFunction(setLayoutFont, "cmark.setFont", &err)) {
+            pd->system->logToConsole("Failed to register cmark.setFont: %s", err);
+        } else {
+            pd->system->logToConsole("cmark.setFont registered successfully");
         }
     }
 

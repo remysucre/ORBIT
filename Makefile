@@ -20,9 +20,10 @@ endif
 VPATH += src
 VPATH += cmark/src
 
-# List C source files here - including cmark sources
+# List C source files here - including cmark sources and clay layout
 SRC = src/main.c \
       src/syscalls.c \
+      src/clay_layout.c \
       cmark/src/blocks.c \
       cmark/src/buffer.c \
       cmark/src/cmark.c \
@@ -50,7 +51,8 @@ UINCDIR = src cmark/src
 UASRC =
 
 # List all user C define here, like -D_DEBUG=1
-UDEFS =
+# CLAY_DISABLE_SIMD: Playdate ARM doesn't have SSE/NEON we can use easily
+UDEFS = -DCLAY_DISABLE_SIMD
 
 # Define ASM defines here
 UADEFS =
