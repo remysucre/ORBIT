@@ -166,16 +166,8 @@ static void buildLayout(const char* markdown) {
     building_link = 0;
     current_link_url[0] = '\0';
 
-    // Text config for normal text
+    // Text config
     Clay_TextElementConfig textConfig = {
-        .textColor = {0, 0, 0, 255},  // Black text
-        .fontId = 0,
-        .fontSize = font_height,
-        .wrapMode = CLAY_TEXT_WRAP_WORDS
-    };
-
-    // Text config for links (same but we'll track position)
-    Clay_TextElementConfig linkTextConfig = {
         .textColor = {0, 0, 0, 255},
         .fontId = 0,
         .fontSize = font_height,
@@ -185,7 +177,7 @@ static void buildLayout(const char* markdown) {
     // Begin Clay layout
     Clay_BeginLayout();
 
-    // Root container - using direct API calls instead of macros
+    // Root container
     Clay__OpenElement();
     Clay__ConfigureOpenElement((Clay_ElementDeclaration){
         .layout = {
@@ -198,12 +190,12 @@ static void buildLayout(const char* markdown) {
         }
     });
 
-    // Walk the cmark AST
-    int in_link = 0;
-    const char* link_url_ptr = NULL;
+    // Large buffer to hold ALL text - each paragraph gets its own section
+    // Clay stores pointers, so we can't reuse the same buffer
+    static char all_text[16384];
+    int all_text_pos = 0;
+    int para_start = 0;  // Start of current paragraph in all_text
     int first_paragraph = 1;
-    static char text_buffer[4096];  // static to ensure lifetime
-    int text_pos = 0;
 
     cmark_iter* iter = cmark_iter_new(doc);
     cmark_event_type ev_type;
@@ -215,40 +207,21 @@ static void buildLayout(const char* markdown) {
         if (ev_type == CMARK_EVENT_ENTER) {
             switch (type) {
                 case CMARK_NODE_PARAGRAPH:
+                    // Add vertical space before non-first paragraphs
                     if (!first_paragraph) {
-                        // Flush text before paragraph break
-                        if (text_pos > 0) {
-                            text_buffer[text_pos] = '\0';
-                            emitText(text_buffer, text_pos, &textConfig);
-                            text_pos = 0;
-                        }
-                        // Add vertical space using direct API
                         Clay__OpenElement();
                         Clay__ConfigureOpenElement((Clay_ElementDeclaration){
                             .layout = {
-                                .sizing = {
-                                    .height = CLAY_SIZING_FIXED((float)font_height)
-                                }
+                                .sizing = { .height = CLAY_SIZING_FIXED((float)font_height) }
                             }
                         });
                         Clay__CloseElement();
                     }
                     first_paragraph = 0;
+                    para_start = all_text_pos;  // Mark start of this paragraph
                     break;
 
                 case CMARK_NODE_LINK:
-                    // Flush any pending text
-                    if (text_pos > 0) {
-                        text_buffer[text_pos] = '\0';
-                        emitText(text_buffer, text_pos, &textConfig);
-                        text_pos = 0;
-                    }
-                    in_link = 1;
-                    link_url_ptr = cmark_node_get_url(node);
-                    if (link_url_ptr) {
-                        strncpy(current_link_url, link_url_ptr, 255);
-                        current_link_url[255] = '\0';
-                    }
                     building_link = 1;
                     break;
 
@@ -256,23 +229,23 @@ static void buildLayout(const char* markdown) {
                     const char* literal = cmark_node_get_literal(node);
                     if (literal) {
                         size_t literal_len = strlen(literal);
-                        if (text_pos + literal_len < sizeof(text_buffer) - 1) {
-                            memcpy(text_buffer + text_pos, literal, literal_len);
-                            text_pos += literal_len;
+                        if (all_text_pos + literal_len < sizeof(all_text) - 1) {
+                            memcpy(all_text + all_text_pos, literal, literal_len);
+                            all_text_pos += literal_len;
                         }
                     }
                     break;
                 }
 
                 case CMARK_NODE_SOFTBREAK:
-                    if (text_pos < (int)sizeof(text_buffer) - 1) {
-                        text_buffer[text_pos++] = ' ';
+                    if (all_text_pos < (int)sizeof(all_text) - 1) {
+                        all_text[all_text_pos++] = ' ';
                     }
                     break;
 
                 case CMARK_NODE_LINEBREAK:
-                    if (text_pos < (int)sizeof(text_buffer) - 1) {
-                        text_buffer[text_pos++] = '\n';
+                    if (all_text_pos < (int)sizeof(all_text) - 1) {
+                        all_text[all_text_pos++] = '\n';
                     }
                     break;
 
@@ -281,9 +254,9 @@ static void buildLayout(const char* markdown) {
                     const char* literal = cmark_node_get_literal(node);
                     if (literal) {
                         size_t literal_len = strlen(literal);
-                        if (text_pos + literal_len < sizeof(text_buffer) - 1) {
-                            memcpy(text_buffer + text_pos, literal, literal_len);
-                            text_pos += literal_len;
+                        if (all_text_pos + literal_len < sizeof(all_text) - 1) {
+                            memcpy(all_text + all_text_pos, literal, literal_len);
+                            all_text_pos += literal_len;
                         }
                     }
                     break;
@@ -294,25 +267,19 @@ static void buildLayout(const char* markdown) {
             }
         } else if (ev_type == CMARK_EVENT_EXIT) {
             switch (type) {
-                case CMARK_NODE_LINK:
-                    // Emit link text
-                    if (text_pos > 0) {
-                        text_buffer[text_pos] = '\0';
-                        emitText(text_buffer, text_pos, &linkTextConfig);
-                        text_pos = 0;
+                case CMARK_NODE_PARAGRAPH: {
+                    // Emit entire paragraph as one text element
+                    int para_len = all_text_pos - para_start;
+                    if (para_len > 0) {
+                        all_text[all_text_pos] = '\0';  // Null terminate
+                        emitText(all_text + para_start, para_len, &textConfig);
+                        all_text_pos++;  // Move past the null terminator
                     }
-                    in_link = 0;
-                    link_url_ptr = NULL;
-                    building_link = 0;
                     break;
+                }
 
-                case CMARK_NODE_DOCUMENT:
-                    // Flush remaining text
-                    if (text_pos > 0) {
-                        text_buffer[text_pos] = '\0';
-                        emitText(text_buffer, text_pos, &textConfig);
-                        text_pos = 0;
-                    }
+                case CMARK_NODE_LINK:
+                    building_link = 0;
                     break;
 
                 default:
