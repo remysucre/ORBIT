@@ -32,7 +32,7 @@ static int font_height = 0;
 #define SCREEN_WIDTH 400
 #define SCREEN_HEIGHT 240
 #define PAGE_PADDING 10
-#define CONTENT_WIDTH (SCREEN_WIDTH - 2 * PAGE_PADDING)
+#define CONTENT_WIDTH (SCREEN_WIDTH - 2 * PAGE_PADDING)  // Small margin for inter-word tracking
 
 // Link storage for collision detection
 #define MAX_LINKS 64
@@ -68,7 +68,7 @@ static Clay_Dimensions measureText(Clay_StringSlice text, Clay_TextElementConfig
     memcpy(temp, text.chars, len);
     temp[len] = '\0';
 
-    int width = pd->graphics->getTextWidth(page_font, temp, len, kUTF8Encoding, 0);
+    int width = pd->graphics->getTextWidth(page_font, temp, len, kUTF8Encoding, 1);
 
     return (Clay_Dimensions){
         .width = (float)width,
@@ -317,6 +317,7 @@ static LCDBitmap* renderLayout(int* out_height) {
 
     pd->graphics->pushContext(bitmap);
     pd->graphics->setFont(page_font);
+    // pd->graphics->setTextTracking(0);  // Ensure measurement and drawing match
 
     // Render commands
     for (int i = 0; i < commands.length; i++) {
