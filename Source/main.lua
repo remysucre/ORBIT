@@ -9,6 +9,8 @@ local net = playdate.network
 local fnt = gfx.font.new("fonts/SYSTEM6")
 gfx.setFont(fnt)
 
+print("leading " .. fnt:getLeading())
+
 local directory = "https://orbit.casa/directory.md"
 local tutorial  = "https://orbit.casa/tutorial.md"
 local back      = "https://orbit.casa/back.md"

@@ -27,6 +27,7 @@ static Clay_Context* clay_ctx = NULL;
 // Font for rendering
 static LCDFont* page_font = NULL;
 static int font_height = 0;
+static int line_height = 0;  // font_height + leading
 
 // Screen dimensions
 #define SCREEN_WIDTH 400
@@ -68,11 +69,11 @@ static Clay_Dimensions measureText(Clay_StringSlice text, Clay_TextElementConfig
     memcpy(temp, text.chars, len);
     temp[len] = '\0';
 
-    int width = pd->graphics->getTextWidth(page_font, temp, len, kUTF8Encoding, 1) + 1;
+    int width = pd->graphics->getTextWidth(page_font, temp, strlen(temp), kUTF8Encoding, 1) + 1;
 
     return (Clay_Dimensions){
         .width = (float)width,
-        .height = (float)font_height
+        .height = (float)line_height
     };
 }
 
@@ -89,10 +90,9 @@ static void clayErrorHandler(Clay_ErrorData errorData) {
 // ============================================================
 
 static void initClay(void) {
-    // Reduce Clay's memory requirements (defaults: 8192 elements, 16384 words)
-    // For simple markdown, we need far fewer
-    Clay_SetMaxElementCount(256);
-    Clay_SetMaxMeasureTextCacheWordCount(1024);
+    // Set Clay limits - need enough for wrapped lines and word cache
+    Clay_SetMaxElementCount(512);
+    Clay_SetMaxMeasureTextCacheWordCount(2048);
 
     // Check minimum memory requirement
     uint32_t minSize = Clay_MinMemorySize();
@@ -115,6 +115,9 @@ static void initClay(void) {
     }
 
     Clay_SetMeasureTextFunction(measureText, NULL);
+
+    // Disable culling since we render to an offscreen bitmap larger than the screen
+    Clay_SetCullingEnabled(false);
 
     pd->system->logToConsole("Clay initialized successfully");
 }
@@ -196,6 +199,7 @@ static void buildLayout(const char* markdown) {
     int all_text_pos = 0;
     int para_start = 0;  // Start of current paragraph in all_text
     int first_paragraph = 1;
+    int para_count = 0;
 
     cmark_iter* iter = cmark_iter_new(doc);
     cmark_event_type ev_type;
@@ -274,6 +278,7 @@ static void buildLayout(const char* markdown) {
                         all_text[all_text_pos] = '\0';  // Null terminate
                         emitText(all_text + para_start, para_len, &textConfig);
                         all_text_pos++;  // Move past the null terminator
+                        para_count++;
                     }
                     break;
                 }
@@ -301,14 +306,15 @@ static LCDBitmap* renderLayout(int* out_height) {
     Clay_RenderCommandArray commands = Clay_EndLayout();
 
     // Calculate total height from commands
-    float max_y = SCREEN_HEIGHT;
+    float max_y = 0;
     for (int i = 0; i < commands.length; i++) {
         Clay_RenderCommand* cmd = Clay_RenderCommandArray_Get(&commands, i);
         float bottom = cmd->boundingBox.y + cmd->boundingBox.height;
         if (bottom > max_y) max_y = bottom;
     }
 
-    int page_height = (int)(max_y + PAGE_PADDING * 2);
+    // Add padding: PAGE_PADDING at top (rendering offset) + PAGE_PADDING at bottom + extra for font baseline
+    int page_height = (int)(max_y + PAGE_PADDING * 2 + font_height);
     if (page_height < SCREEN_HEIGHT) page_height = SCREEN_HEIGHT;
 
     // Create bitmap
@@ -337,7 +343,7 @@ static LCDBitmap* renderLayout(int* out_height) {
                 memcpy(temp, textData->stringContents.chars, len);
                 temp[len] = '\0';
 
-                pd->graphics->drawText(temp, len, kUTF8Encoding, x, y);
+                pd->graphics->drawText(temp, strlen(temp), kUTF8Encoding, x, y);
                 break;
             }
 
@@ -432,7 +438,8 @@ int eventHandler(PlaydateAPI* playdate, PDSystemEvent event, uint32_t arg) {
             return 0;
         }
         font_height = pd->graphics->getFontHeight(page_font);
-        pd->system->logToConsole("Font loaded, height: %d", font_height);
+        line_height = font_height + 2;  // Add leading (SYSTEM6 uses 2px leading)
+        pd->system->logToConsole("Font loaded, height: %d, line_height: %d", font_height, line_height);
 
         // Initialize Clay
         initClay();
