@@ -165,12 +165,14 @@ function initializePage()
 	page.width = SCREEN_WIDTH
 	page.padding = PAGE_PADDING
 	page.contentWidth = page.width - 2 * page.padding
-	page.links = {}  -- Array of Link objects
 
 	return page
 end
 
 local page = initializePage()
+
+-- Initialize C renderer
+cmark.initRenderer("fonts/SYSTEM6", page.width, page.padding, fnt:getTracking())
 
 function viewport:moveTo(newTop)
 	newTop = math.floor(newTop + 0.5)
@@ -180,9 +182,7 @@ function viewport:moveTo(newTop)
 
 	-- Move page and all links physically
 	page:moveBy(0, dy)
-	for _, link in ipairs(page.links) do
-		link:moveBy(0, dy)
-	end
+	cmark.moveLinkSprites(0, dy)
 end
 
 -- Cursor initialization
@@ -251,100 +251,8 @@ end
 
 cursor:updateImage()  -- Set initial cursor image
 
--- Link class that represents a clickable link (extends sprite)
--- Defined after cursor so it can access cursor as an upvalue
-class('Link').extends(gfx.sprite)
-
-function Link:init(url, segments, font, padding)
-	-- Calculate bounding box from all segments
-	local minX = math.huge
-	local minY = math.huge
-	local maxX = -math.huge
-	local maxY = -math.huge
-
-	for _, seg in ipairs(segments) do
-		seg.w = font:getTextWidth(seg.text)
-		minX = math.min(minX, seg.x)
-		minY = math.min(minY, seg.y)
-		maxX = math.max(maxX, seg.x + seg.w)
-		maxY = math.max(maxY, seg.y)
-	end
-
-	local textHeight = font:getHeight()
-	local width = maxX - minX
-	local height = maxY - minY + textHeight
-
-	if width <= 0 or height <= 0 or width ~= width then
-		error("Invalid link dimensions: " .. tostring(width) .. "x" .. tostring(height))
-	end
-
-	Link.super.init(self)
-
-	self.url = url
-	self.segments = segments  -- Array of {x, y, text, w}
-	self.textHeight = textHeight
-	self.offsetX = minX
-	self.offsetY = minY
-
-	local image = gfx.image.new(width, height)
-	if not image then
-		error("Failed to create link image")
-	end
-
-	self:drawSegments(image, false)
-	self:setImage(image)
-	self:setSize(width, height)
-	self:setCenter(0, 0)
-	self:moveTo(padding + minX, padding + minY)
-	self:setZIndex(-1)  -- Below page content (page draws the text)
-	self:setCollideRect(0, 0, width, height)
-	self:setCollidesWithGroups({1})
-	self.collisionResponse = gfx.sprite.kCollisionTypeOverlap
-	self.wasHovered = false
-end
-
-function Link:update()
-	local isHovered = cursor:alphaCollision(self)
-	if isHovered ~= self.wasHovered then
-		self.wasHovered = isHovered
-		self:redrawImage(isHovered)
-	end
-end
-
-function Link:drawSegments(image, isHovered)
-	gfx.pushContext(image)
-
-	if isHovered then
-		gfx.setLineWidth(2)
-	end
-
-	for _, seg in ipairs(self.segments) do
-		local localX = seg.x - self.offsetX
-		local localY = seg.y - self.offsetY
-
-		-- Draw white background (for collision detection)
-		gfx.setColor(gfx.kColorWhite)
-		gfx.fillRect(localX, localY, seg.w, self.textHeight)
-
-		-- Draw underline
-		gfx.setColor(gfx.kColorBlack)
-		gfx.drawLine(localX, localY + self.textHeight - 2,
-		             localX + seg.w, localY + self.textHeight - 2)
-	end
-
-	if isHovered then
-		gfx.setLineWidth(1)
-	end
-
-	gfx.popContext()
-end
-
-function Link:redrawImage(isHovered)
-	local width, height = self:getSize()
-	local image = gfx.image.new(width, height, gfx.kColorClear)
-	self:drawSegments(image, isHovered)
-	self:setImage(image)
-end
+-- Track hovered links for visual feedback
+local hoveredLinks = {}
 
 function parseURL(url)
 	local secure = string.match(url, "^https://") ~= nil
@@ -413,98 +321,15 @@ function fetchPage(url)
 	conn:get(path)
 end
 
-function page:cleanupLinks()
-	for _, link in ipairs(self.links) do
-		if link then link:remove() end
-	end
-	self.links = {}
-end
-
--- Word-wrapping layout function
--- Returns: newX, newY, segments array of {x, y, text}
-local function layoutWords(text, x, y, font, contentWidth)
-	local segments = {}
-	local h = font:getHeight()
-	local sw = font:getTextWidth(" ")
-	local tracking = font:getTracking()
-	local pos = 1
-
-	local segment = ""
-	local segX, segY = x, y
-
-	while pos <= #text do
-		if string.sub(text, pos, pos) == " " then
-			if x + sw <= contentWidth then
-				x = x + sw + tracking
-				segment = segment .. " "
-			end
-			pos = pos + 1
-		else
-			local wordEnd = string.find(text, " ", pos) or #text + 1
-			local word = string.sub(text, pos, wordEnd - 1)
-			local w = font:getTextWidth(word)
-
-			-- Wrap if needed
-			if x > 0 and x + w > contentWidth then
-				table.insert(segments, {x = segX, y = segY, text = segment})
-				y = y + h
-				x = 0
-				segment = ""
-				segX, segY = x, y
-			end
-
-			x = x + w + tracking
-			segment = segment .. word
-			pos = wordEnd
-		end
-	end
-
-	table.insert(segments, {x = segX, y = segY, text = segment})
-
-	return x, y, segments
-end
-
 function render(text)
-	page:cleanupLinks()
+	cmark.cleanupLinks()
+	hoveredLinks = {}
 	viewport.top = 0
 
-	local fragments = json.decode(cmark.parse(text)) or {}
-	local h = fnt:getHeight()
-	local textSegments = {}
-
-	-- Layout pass: create links, buffer text segments (including link text)
-	local x, y = 0, 0
-	for _, frag in ipairs(fragments) do
-		if frag.type == "break" then
-			x, y = 0, y + h * 2
-		else
-			local segments
-			x, y, segments = layoutWords(frag.text, x, y, fnt, page.contentWidth)
-			if frag.type == "link" then
-				local success, link = pcall(Link, frag.url, segments, fnt, page.padding)
-				if success then
-					link:add()
-					table.insert(page.links, link)
-				end
-			end
-			-- Add all segments (both plain text and links) to textSegments
-			for _, seg in ipairs(segments) do
-				table.insert(textSegments, seg)
-			end
-		end
-	end
-
-	-- Create image with clear background and draw all text
-	page.height = math.max(SCREEN_HEIGHT, y + h + 2 * page.padding)
-	local pageImage = gfx.image.new(page.width, page.height, gfx.kColorClear)
+	local pageImage, pageHeight = cmark.render(text)
 	if not pageImage then return end
 
-	gfx.pushContext(pageImage)
-	for _, seg in ipairs(textSegments) do
-		fnt:drawText(seg.text, page.padding + seg.x, page.padding + seg.y)
-	end
-	gfx.popContext()
-
+	page.height = pageHeight
 	page:setImage(pageImage)
 	page:moveTo(0, 0)
 end
@@ -515,10 +340,13 @@ local function handleNavInput()
 	-- A/RIGHT to activate links
 	if playdate.buttonJustPressed(playdate.kButtonRight) or
 	   playdate.buttonJustPressed(playdate.kButtonA) then
-		for _, link in ipairs(cursor:overlappingSprites()) do
-			if cursor:alphaCollision(link) then
-				fetchPage(link.url)
-				break
+		for _, sprite in ipairs(cursor:overlappingSprites()) do
+			if cursor:alphaCollision(sprite) then
+				local url = cmark.getLinkData(sprite)
+				if url then
+					fetchPage(url)
+					break
+				end
 			end
 		end
 	end
@@ -587,6 +415,21 @@ local function updateScroll()
 	end
 end
 
+local function updateLinkHover()
+	-- Update link hover states
+	for _, sprite in ipairs(cursor:overlappingSprites()) do
+		local url = cmark.getLinkData(sprite)
+		if url then
+			local isHovered = cursor:alphaCollision(sprite)
+			local wasHovered = hoveredLinks[sprite]
+			if isHovered ~= wasHovered then
+				hoveredLinks[sprite] = isHovered or nil
+				cmark.setLinkHovered(sprite, isHovered)
+			end
+		end
+	end
+end
+
 function playdate.update()
 	if not nav.initialPageLoaded then
 		fetchPage(tutorial)
@@ -596,6 +439,7 @@ function playdate.update()
 	handleNavInput()
 	updateCursor()
 	updateScroll()
+	updateLinkHover()
 
 	gfx.sprite.update()
 	gfx.animation.blinker.updateAll()
