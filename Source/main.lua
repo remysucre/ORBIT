@@ -251,8 +251,24 @@ end
 
 cursor:updateImage()  -- Set initial cursor image
 
--- Track hovered links for visual feedback
-local hoveredLinks = {}
+-- Link wrapper class for hover detection
+local links = {}
+
+class('Link').extends()
+
+function Link:init(sprite, url)
+	self.sprite = sprite
+	self.url = url
+	self.wasHovered = false
+end
+
+function Link:update()
+	local isHovered = cursor:alphaCollision(self.sprite)
+	if isHovered ~= self.wasHovered then
+		self.wasHovered = isHovered
+		cmark.setLinkHovered(self.sprite, isHovered)
+	end
+end
 
 function parseURL(url)
 	local secure = string.match(url, "^https://") ~= nil
@@ -323,15 +339,23 @@ end
 
 function render(text)
 	cmark.cleanupLinks()
-	hoveredLinks = {}
+	links = {}
 	viewport.top = 0
 
-	local pageImage, pageHeight = cmark.render(text)
+	local pageImage, pageHeight, linkCount = cmark.render(text)
 	if not pageImage then return end
 
 	page.height = pageHeight
 	page:setImage(pageImage)
 	page:moveTo(0, 0)
+
+	-- Create Link wrappers for C sprites
+	for i = 0, linkCount - 1 do
+		local sprite, url = cmark.getLinkInfo(i)
+		if sprite and url then
+			table.insert(links, Link(sprite, url))
+		end
+	end
 end
 
 menu:init()
@@ -415,30 +439,9 @@ local function updateScroll()
 	end
 end
 
-local function updateLinkHover()
-	-- Build set of currently hovered links
-	local currentlyHovered = {}
-	for _, sprite in ipairs(cursor:overlappingSprites()) do
-		local url = cmark.getLinkData(sprite)
-		if url and cursor:alphaCollision(sprite) then
-			currentlyHovered[sprite] = true
-		end
-	end
-
-	-- Unhover links that are no longer hovered
-	for sprite, _ in pairs(hoveredLinks) do
-		if not currentlyHovered[sprite] then
-			cmark.setLinkHovered(sprite, false)
-			hoveredLinks[sprite] = nil
-		end
-	end
-
-	-- Hover newly hovered links
-	for sprite, _ in pairs(currentlyHovered) do
-		if not hoveredLinks[sprite] then
-			cmark.setLinkHovered(sprite, true)
-			hoveredLinks[sprite] = true
-		end
+local function updateLinks()
+	for _, link in ipairs(links) do
+		link:update()
 	end
 end
 
@@ -451,7 +454,7 @@ function playdate.update()
 	handleNavInput()
 	updateCursor()
 	updateScroll()
-	updateLinkHover()
+	updateLinks()
 
 	gfx.sprite.update()
 	gfx.animation.blinker.updateAll()

@@ -687,11 +687,12 @@ static int renderPage(lua_State* L) {
 
     pd->graphics->popContext();
 
-    // Return page image and height to Lua
+    // Return page image, height, and link count to Lua
     pd->lua->pushBitmap(renderState.pageImage);
     pd->lua->pushInt(renderState.pageHeight);
+    pd->lua->pushInt(renderState.linkCount);
 
-    return 2;
+    return 3;
 }
 
 // Get link data from a sprite (returns URL if it's a link sprite, nil otherwise)
@@ -728,6 +729,30 @@ static int getLinkData(lua_State* L) {
 
     pd->lua->pushString(link->url);
     return 1;
+}
+
+// Get link info by index (returns sprite, url)
+static int getLinkInfo(lua_State* L) {
+    (void)L;
+
+    int index = pd->lua->getArgInt(1);
+
+    if (index < 0 || index >= renderState.linkCount) {
+        pd->lua->pushNil();
+        pd->lua->pushNil();
+        return 2;
+    }
+
+    LinkData* link = &renderState.links[index];
+    if (!link->sprite) {
+        pd->lua->pushNil();
+        pd->lua->pushNil();
+        return 2;
+    }
+
+    pd->lua->pushSprite(link->sprite);
+    pd->lua->pushString(link->url);
+    return 2;
 }
 
 // Set link hover state (redraws the link image)
@@ -818,6 +843,10 @@ int eventHandler(PlaydateAPI* playdate, PDSystemEvent event, uint32_t arg) {
 
         if (!pd->lua->addFunction(getLinkData, "cmark.getLinkData", &err)) {
             pd->system->logToConsole("Failed to register cmark.getLinkData: %s", err);
+        }
+
+        if (!pd->lua->addFunction(getLinkInfo, "cmark.getLinkInfo", &err)) {
+            pd->system->logToConsole("Failed to register cmark.getLinkInfo: %s", err);
         }
 
         if (!pd->lua->addFunction(setLinkHovered, "cmark.setLinkHovered", &err)) {
