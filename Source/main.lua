@@ -416,16 +416,28 @@ local function updateScroll()
 end
 
 local function updateLinkHover()
-	-- Update link hover states
+	-- Build set of currently hovered links
+	local currentlyHovered = {}
 	for _, sprite in ipairs(cursor:overlappingSprites()) do
 		local url = cmark.getLinkData(sprite)
-		if url then
-			local isHovered = cursor:alphaCollision(sprite)
-			local wasHovered = hoveredLinks[sprite]
-			if isHovered ~= wasHovered then
-				hoveredLinks[sprite] = isHovered or nil
-				cmark.setLinkHovered(sprite, isHovered)
-			end
+		if url and cursor:alphaCollision(sprite) then
+			currentlyHovered[sprite] = true
+		end
+	end
+
+	-- Unhover links that are no longer hovered
+	for sprite, _ in pairs(hoveredLinks) do
+		if not currentlyHovered[sprite] then
+			cmark.setLinkHovered(sprite, false)
+			hoveredLinks[sprite] = nil
+		end
+	end
+
+	-- Hover newly hovered links
+	for sprite, _ in pairs(currentlyHovered) do
+		if not hoveredLinks[sprite] then
+			cmark.setLinkHovered(sprite, true)
+			hoveredLinks[sprite] = true
 		end
 	end
 end
