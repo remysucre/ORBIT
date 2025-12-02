@@ -171,8 +171,11 @@ end
 
 local page = initializePage()
 
--- Initialize C renderer
-cmark.initRenderer("fonts/SYSTEM6", page.width, page.padding, fnt:getTracking())
+-- Initialize C renderer (font cache only)
+cmark.initRenderer("fonts/SYSTEM6")
+
+-- Links array (populated by render())
+local links = {}
 
 function viewport:moveTo(newTop)
 	newTop = math.floor(newTop + 0.5)
@@ -180,9 +183,11 @@ function viewport:moveTo(newTop)
 	local dy = self.top - newTop
 	self.top = newTop
 
-	-- Move page and all links physically
+	-- Move page and all link sprites
 	page:moveBy(0, dy)
-	cmark.moveLinkSprites(0, dy)
+	for _, link in ipairs(links) do
+		link:moveBy(0, dy)
+	end
 end
 
 -- Cursor initialization
@@ -251,22 +256,74 @@ end
 
 cursor:updateImage()  -- Set initial cursor image
 
--- Link wrapper class for hover detection
-local links = {}
+-- Link sprite class
+class('Link').extends(gfx.sprite)
 
-class('Link').extends()
-
-function Link:init(sprite, url)
-	self.sprite = sprite
+function Link:init(url, segments)
+	Link.super.init(self)
 	self.url = url
-	self.wasHovered = false
+	self.segments = segments  -- array of {x, y, w}
+	self.isHovered = false
+
+	-- Calculate bounding box
+	local minX, minY = math.huge, math.huge
+	local maxX, maxY = -math.huge, -math.huge
+	local h = fnt:getHeight()
+
+	for _, seg in ipairs(segments) do
+		minX = math.min(minX, seg.x)
+		minY = math.min(minY, seg.y)
+		maxX = math.max(maxX, seg.x + seg.w)
+		maxY = math.max(maxY, seg.y + h)
+	end
+
+	self.offsetX = minX
+	self.offsetY = minY
+	self.width = maxX - minX
+	self.height = maxY - minY
+
+	self:setSize(self.width, self.height)
+	self:setCenter(0, 0)
+	self:moveTo(PAGE_PADDING + minX, PAGE_PADDING + minY)
+	self:setZIndex(-1)
+	self:setCollideRect(0, 0, self.width, self.height)
+
+	self:updateImage()
+	self:add()
+end
+
+function Link:updateImage()
+	local img = gfx.image.new(self.width, self.height, gfx.kColorClear)
+	gfx.pushContext(img)
+
+	local lineWidth = self.isHovered and 2 or 1
+	local h = fnt:getHeight()
+
+	for _, seg in ipairs(self.segments) do
+		local localX = seg.x - self.offsetX
+		local localY = seg.y - self.offsetY
+
+		-- White fill for alpha collision
+		gfx.setColor(gfx.kColorWhite)
+		gfx.fillRect(localX, localY, seg.w, h)
+
+		-- Underline
+		gfx.setColor(gfx.kColorBlack)
+		gfx.drawLine(localX, localY + h - 2, localX + seg.w, localY + h - 2)
+		if lineWidth == 2 then
+			gfx.drawLine(localX, localY + h - 1, localX + seg.w, localY + h - 1)
+		end
+	end
+
+	gfx.popContext()
+	self:setImage(img)
 end
 
 function Link:update()
-	local isHovered = cursor:alphaCollision(self.sprite)
-	if isHovered ~= self.wasHovered then
-		self.wasHovered = isHovered
-		cmark.setLinkHovered(self.sprite, isHovered)
+	local wasHovered = self.isHovered
+	self.isHovered = cursor:alphaCollision(self)
+	if self.isHovered ~= wasHovered then
+		self:updateImage()
 	end
 end
 
@@ -338,23 +395,30 @@ function fetchPage(url)
 end
 
 function render(text)
-	cmark.cleanupLinks()
+	-- Remove old link sprites
+	for _, link in ipairs(links) do
+		link:remove()
+	end
 	links = {}
 	viewport.top = 0
 
-	local pageImage, pageHeight, linkCount = cmark.render(text)
+	-- C returns image, height, and links as JSON
+	local pageImage, pageHeight, linksJson = cmark.render(
+		text, page.width, page.padding, fnt:getTracking())
 	if not pageImage then return end
 
 	page.height = pageHeight
 	page:setImage(pageImage)
 	page:moveTo(0, 0)
 
-	-- Create Link wrappers for C sprites
-	for i = 0, linkCount - 1 do
-		local sprite, url = cmark.getLinkInfo(i)
-		if sprite and url then
-			table.insert(links, Link(sprite, url))
+	-- Decode JSON and create Link sprites
+	local linkData = json.decode(linksJson) or {}
+	for _, data in ipairs(linkData) do
+		local segments = {}
+		for _, seg in ipairs(data.segments) do
+			table.insert(segments, {x = seg[1], y = seg[2], w = seg[3]})
 		end
+		table.insert(links, Link(data.url, segments))
 	end
 end
 
@@ -365,12 +429,9 @@ local function handleNavInput()
 	if playdate.buttonJustPressed(playdate.kButtonRight) or
 	   playdate.buttonJustPressed(playdate.kButtonA) then
 		for _, sprite in ipairs(cursor:overlappingSprites()) do
-			if cursor:alphaCollision(sprite) then
-				local url = cmark.getLinkData(sprite)
-				if url then
-					fetchPage(url)
-					break
-				end
+			if cursor:alphaCollision(sprite) and sprite.url then
+				fetchPage(sprite.url)
+				break
 			end
 		end
 	end
@@ -439,12 +500,6 @@ local function updateScroll()
 	end
 end
 
-local function updateLinks()
-	for _, link in ipairs(links) do
-		link:update()
-	end
-end
-
 function playdate.update()
 	if not nav.initialPageLoaded then
 		fetchPage(tutorial)
@@ -454,8 +509,7 @@ function playdate.update()
 	handleNavInput()
 	updateCursor()
 	updateScroll()
-	updateLinks()
 
-	gfx.sprite.update()
+	gfx.sprite.update()  -- Calls Link:update() automatically
 	gfx.animation.blinker.updateAll()
 end
