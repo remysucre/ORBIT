@@ -1,6 +1,6 @@
 //
 //  main.c
-//  ORBIT - cmark markdown parser and page renderer for Playdate
+//  ORBIT - cmark markdown parser and lexbor HTML parser for Playdate
 //
 
 #include <stdio.h>
@@ -9,6 +9,8 @@
 
 #include "pd_api.h"
 #include "cmark.h"
+#include "lexbor/html/html.h"
+#include "lexbor/dom/interfaces/character_data.h"
 
 static PlaydateAPI* pd = NULL;
 
@@ -358,6 +360,198 @@ static int renderPage(lua_State* L) {
     return 3;
 }
 
+// ============================================================================
+// HTML Parsing Functions (lexbor)
+// ============================================================================
+
+#define MAX_JSON_SIZE 65536
+
+// Helper to escape a string for JSON
+static int escapeJsonString(char* dest, int destSize, const char* src, int srcLen) {
+    int pos = 0;
+    for (int i = 0; i < srcLen && pos < destSize - 6; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c == '"') {
+            dest[pos++] = '\\';
+            dest[pos++] = '"';
+        } else if (c == '\\') {
+            dest[pos++] = '\\';
+            dest[pos++] = '\\';
+        } else if (c == '\n') {
+            dest[pos++] = '\\';
+            dest[pos++] = 'n';
+        } else if (c == '\r') {
+            dest[pos++] = '\\';
+            dest[pos++] = 'r';
+        } else if (c == '\t') {
+            dest[pos++] = '\\';
+            dest[pos++] = 't';
+        } else if (c < 32) {
+            // Skip other control characters
+        } else {
+            dest[pos++] = c;
+        }
+    }
+    dest[pos] = '\0';
+    return pos;
+}
+
+// Recursive function to serialize DOM node to JSON
+static int serializeNode(lxb_dom_node_t *node, char* json, int jsonSize, int pos) {
+    if (node == NULL || pos >= jsonSize - 100) {
+        return pos;
+    }
+
+    int first = 1;
+    while (node != NULL && pos < jsonSize - 100) {
+        if (!first) {
+            pos += snprintf(json + pos, jsonSize - pos, ",");
+        }
+        first = 0;
+
+        if (node->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+            lxb_dom_element_t *element = lxb_dom_interface_element(node);
+
+            // Get tag name
+            size_t tagLen;
+            const lxb_char_t *tagName = lxb_dom_element_qualified_name(element, &tagLen);
+
+            pos += snprintf(json + pos, jsonSize - pos, "{\"tag\":\"");
+            if (tagName && tagLen > 0) {
+                // Lowercase the tag name
+                for (size_t i = 0; i < tagLen && pos < jsonSize - 10; i++) {
+                    char c = tagName[i];
+                    if (c >= 'A' && c <= 'Z') c += 32;
+                    json[pos++] = c;
+                }
+            }
+            pos += snprintf(json + pos, jsonSize - pos, "\"");
+
+            // Serialize attributes
+            lxb_dom_attr_t *attr = lxb_dom_element_first_attribute(element);
+            if (attr != NULL) {
+                pos += snprintf(json + pos, jsonSize - pos, ",\"attrs\":{");
+                int firstAttr = 1;
+                while (attr != NULL && pos < jsonSize - 200) {
+                    if (!firstAttr) {
+                        pos += snprintf(json + pos, jsonSize - pos, ",");
+                    }
+                    firstAttr = 0;
+
+                    size_t nameLen, valueLen;
+                    const lxb_char_t *attrName = lxb_dom_attr_qualified_name(attr, &nameLen);
+                    const lxb_char_t *attrValue = lxb_dom_attr_value(attr, &valueLen);
+
+                    pos += snprintf(json + pos, jsonSize - pos, "\"");
+                    if (attrName && nameLen > 0) {
+                        char escaped[256];
+                        escapeJsonString(escaped, sizeof(escaped), (const char*)attrName, (int)nameLen);
+                        pos += snprintf(json + pos, jsonSize - pos, "%s", escaped);
+                    }
+                    pos += snprintf(json + pos, jsonSize - pos, "\":\"");
+                    if (attrValue && valueLen > 0) {
+                        char escaped[1024];
+                        escapeJsonString(escaped, sizeof(escaped), (const char*)attrValue, (int)valueLen);
+                        pos += snprintf(json + pos, jsonSize - pos, "%s", escaped);
+                    }
+                    pos += snprintf(json + pos, jsonSize - pos, "\"");
+
+                    attr = lxb_dom_element_next_attribute(attr);
+                }
+                pos += snprintf(json + pos, jsonSize - pos, "}");
+            }
+
+            // Serialize children
+            if (node->first_child != NULL) {
+                pos += snprintf(json + pos, jsonSize - pos, ",\"children\":[");
+                pos = serializeNode(node->first_child, json, jsonSize, pos);
+                pos += snprintf(json + pos, jsonSize - pos, "]");
+            }
+
+            pos += snprintf(json + pos, jsonSize - pos, "}");
+
+        } else if (node->type == LXB_DOM_NODE_TYPE_TEXT) {
+            lxb_dom_character_data_t *char_data = lxb_dom_interface_character_data(node);
+            const lxb_char_t *textContent = char_data->data.data;
+            size_t textLen = char_data->data.length;
+
+            if (textContent && textLen > 0) {
+                pos += snprintf(json + pos, jsonSize - pos, "{\"text\":\"");
+                char escaped[4096];
+                escapeJsonString(escaped, sizeof(escaped), (const char*)textContent, (int)textLen);
+                pos += snprintf(json + pos, jsonSize - pos, "%s", escaped);
+                pos += snprintf(json + pos, jsonSize - pos, "\"}");
+            } else {
+                // Empty text node, skip it
+                first = 1; // Don't count as an item
+            }
+        }
+        // Skip other node types (comments, etc.)
+
+        node = node->next;
+    }
+
+    return pos;
+}
+
+// Parse HTML and return JSON DOM tree
+// Args: html (string)
+// Returns: json (string) or nil on error
+static int parseHTML(lua_State* L) {
+    (void)L;
+
+    const char* html = pd->lua->getArgString(1);
+    if (!html) {
+        pd->system->logToConsole("parseHTML: missing html argument");
+        pd->lua->pushNil();
+        return 1;
+    }
+
+    // Create HTML document
+    lxb_html_document_t *document = lxb_html_document_create();
+    if (document == NULL) {
+        pd->system->logToConsole("parseHTML: failed to create document");
+        pd->lua->pushNil();
+        return 1;
+    }
+
+    // Parse HTML
+    lxb_status_t status = lxb_html_document_parse(document,
+        (const lxb_char_t *)html, strlen(html));
+
+    if (status != LXB_STATUS_OK) {
+        pd->system->logToConsole("parseHTML: failed to parse HTML");
+        lxb_html_document_destroy(document);
+        pd->lua->pushNil();
+        return 1;
+    }
+
+    // Allocate JSON buffer
+    static char json[MAX_JSON_SIZE];
+    int pos = 0;
+
+    // Start with root object containing the document
+    pos += snprintf(json + pos, MAX_JSON_SIZE - pos, "{\"children\":[");
+
+    // Serialize the document body (or full document if no body)
+    lxb_dom_node_t *root = lxb_dom_interface_node(document);
+    if (document->body != NULL) {
+        root = lxb_dom_interface_node(document->body);
+        pos = serializeNode(root->first_child, json, MAX_JSON_SIZE, pos);
+    } else if (root->first_child != NULL) {
+        pos = serializeNode(root->first_child, json, MAX_JSON_SIZE, pos);
+    }
+
+    pos += snprintf(json + pos, MAX_JSON_SIZE - pos, "]}");
+
+    // Cleanup
+    lxb_html_document_destroy(document);
+
+    // Return JSON string
+    pd->lua->pushString(json);
+    return 1;
+}
+
 #ifdef _WINDLL
 __declspec(dllexport)
 #endif
@@ -377,7 +571,11 @@ int eventHandler(PlaydateAPI* playdate, PDSystemEvent event, uint32_t arg) {
             pd->system->logToConsole("Failed to register cmark.render: %s", err);
         }
 
-        pd->system->logToConsole("cmark functions registered");
+        if (!pd->lua->addFunction(parseHTML, "html.parse", &err)) {
+            pd->system->logToConsole("Failed to register html.parse: %s", err);
+        }
+
+        pd->system->logToConsole("cmark and html functions registered");
     }
 
     return 0;

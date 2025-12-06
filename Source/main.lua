@@ -174,6 +174,29 @@ local page = initializePage()
 -- Initialize C renderer (font cache only)
 cmark.initRenderer("fonts/cuniform-heavy")
 
+-- Test HTML parsing
+local testHTML = [[
+<html>
+<head><title>Test Page</title></head>
+<body>
+<h1>Hello World</h1>
+<p>This is a <a href="https://example.com">link</a> in a paragraph.</p>
+<ul>
+<li>Item 1</li>
+<li>Item 2</li>
+</ul>
+</body>
+</html>
+]]
+
+local jsonResult = html.parse(testHTML)
+if jsonResult then
+	print("HTML parse result:")
+	print(jsonResult)
+else
+	print("HTML parse failed!")
+end
+
 -- Links array (populated by render())
 local links = {}
 
