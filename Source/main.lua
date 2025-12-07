@@ -196,7 +196,14 @@ end
 function initializeCursor()
 	local cursor = gfx.sprite.new()
 
-	cursor:moveTo(130, 42)
+	-- Calculate initial position based on tutorial text layout
+	-- "Here's your cursor: " appears on line 3 (after header and vspace)
+	local introText = "Here's your cursor: "
+	local lineHeight = fnt:getHeight() + fnt:getLeading()
+	local cursorX = PAGE_PADDING + fnt:getTextWidth(introText) + CURSOR_SIZE / 2
+	local cursorY = PAGE_PADDING + lineHeight * 2 + fnt:getHeight() / 2
+
+	cursor:moveTo(cursorX, cursorY)
 	cursor:setSize(CURSOR_SIZE, CURSOR_SIZE)
 	cursor:setZIndex(CURSOR_ZINDEX)
 	cursor:setCollideRect(CURSOR_COLLISION_RECT.x, CURSOR_COLLISION_RECT.y,
