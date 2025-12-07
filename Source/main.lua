@@ -406,18 +406,7 @@ function render(text, url)
 
 	local pageImage, pageHeight, linkData
 
-	-- Check if we have an HTML parser for this URL
-	local parser = url and siteparsers.findParser(url)
-	if parser then
-		-- HTML path: parse → IR → render
-		local ir, err = siteparsers.parse(url, text)
-		if ir then
-			pageImage, pageHeight, linkData = htmlRenderer.render(ir, fnt, page.width, page.padding)
-		else
-			print("HTML parse error:", err)
-			return
-		end
-	else
+	if url and url:match("%.md$") then
 		-- Markdown path: use cmark
 		local linksJson
 		pageImage, pageHeight, linksJson = cmark.render(
@@ -433,6 +422,15 @@ function render(text, url)
 				table.insert(segments, {x = seg[1], y = seg[2], w = seg[3]})
 			end
 			table.insert(linkData, {url = data.url, segments = segments})
+		end
+	else
+		-- HTML path
+		local ir, err = siteparsers.parse(url, text)
+		if ir then
+			pageImage, pageHeight, linkData = htmlRenderer.render(ir, fnt, page.width, page.padding)
+		else
+			print("HTML parse error:", err)
+			return
 		end
 	end
 
