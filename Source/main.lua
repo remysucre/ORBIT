@@ -305,7 +305,7 @@ function Link:updateImage()
 		local localX = seg.x - self.offsetX
 		local localY = seg.y - self.offsetY
 
-		-- White fill for background and alpha collision
+		-- White fill for alpha collision
 		gfx.setColor(gfx.kColorWhite)
 		gfx.fillRect(localX, localY, seg.w, h)
 
