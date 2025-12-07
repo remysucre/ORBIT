@@ -33,6 +33,19 @@ static struct {
     int fontHeight;
 } fontCache = {0};
 
+// JSON encoder buffer
+static char* jsonBuffer;
+static int jsonBufferPos;
+static int jsonBufferSize;
+
+static void jsonWrite(void* userdata, const char* str, int len) {
+    (void)userdata;
+    if (jsonBufferPos + len < jsonBufferSize) {
+        memcpy(jsonBuffer + jsonBufferPos, str, len);
+        jsonBufferPos += len;
+    }
+}
+
 // ============================================================================
 // Page Rendering Functions
 // ============================================================================
@@ -208,13 +221,17 @@ static int renderPage(lua_State* L) {
     static TextSegment allSegments[MAX_TEXT_SEGMENTS];
     int totalSegments = 0;
 
-    // Build links JSON
+    // Build links JSON using encoder
     #define MAX_LINKS_JSON 16384
     #define MAX_SEGMENTS_PER_LINK 8
     static char linksJson[MAX_LINKS_JSON];
-    int jsonPos = 0;
-    int linkCount = 0;
-    jsonPos += snprintf(linksJson + jsonPos, MAX_LINKS_JSON - jsonPos, "[");
+    jsonBuffer = linksJson;
+    jsonBufferPos = 0;
+    jsonBufferSize = MAX_LINKS_JSON;
+
+    json_encoder encoder;
+    pd->json->initEncoder(&encoder, jsonWrite, NULL, 0);
+    encoder.startArray(&encoder);
 
     // Layout state
     int x = 0, y = 0;
@@ -287,28 +304,32 @@ static int renderPage(lua_State* L) {
         } else if (ev_type == CMARK_EVENT_EXIT) {
             if (type == CMARK_NODE_LINK && inLink) {
                 // Add link to JSON
-                if (linkSegmentCount > 0 && jsonPos < MAX_LINKS_JSON - 512) {
-                    if (linkCount > 0) {
-                        jsonPos += snprintf(linksJson + jsonPos, MAX_LINKS_JSON - jsonPos, ",");
-                    }
+                if (linkSegmentCount > 0) {
+                    encoder.addArrayMember(&encoder);
+                    encoder.startTable(&encoder);
 
-                    // Start link object with URL
-                    jsonPos += snprintf(linksJson + jsonPos, MAX_LINKS_JSON - jsonPos,
-                                       "{\"url\":\"%s\",\"segments\":[",
-                                       linkUrl ? linkUrl : "");
+                    // URL
+                    encoder.addTableMember(&encoder, "url", 3);
+                    encoder.writeString(&encoder, linkUrl ? linkUrl : "", linkUrl ? (int)strlen(linkUrl) : 0);
 
-                    // Add segments as [x, y, w] arrays
+                    // Segments array
+                    encoder.addTableMember(&encoder, "segments", 8);
+                    encoder.startArray(&encoder);
                     for (int i = 0; i < linkSegmentCount; i++) {
                         TextSegment* seg = &linkSegments[i];
-                        if (i > 0) {
-                            jsonPos += snprintf(linksJson + jsonPos, MAX_LINKS_JSON - jsonPos, ",");
-                        }
-                        jsonPos += snprintf(linksJson + jsonPos, MAX_LINKS_JSON - jsonPos,
-                                           "[%d,%d,%d]", seg->x, seg->y, seg->width);
+                        encoder.addArrayMember(&encoder);
+                        encoder.startArray(&encoder);
+                        encoder.addArrayMember(&encoder);
+                        encoder.writeInt(&encoder, seg->x);
+                        encoder.addArrayMember(&encoder);
+                        encoder.writeInt(&encoder, seg->y);
+                        encoder.addArrayMember(&encoder);
+                        encoder.writeInt(&encoder, seg->width);
+                        encoder.endArray(&encoder);
                     }
+                    encoder.endArray(&encoder);
 
-                    jsonPos += snprintf(linksJson + jsonPos, MAX_LINKS_JSON - jsonPos, "]}");
-                    linkCount++;
+                    encoder.endTable(&encoder);
                 }
 
                 inLink = 0;
@@ -319,7 +340,8 @@ static int renderPage(lua_State* L) {
     }
 
     // Close JSON array
-    jsonPos += snprintf(linksJson + jsonPos, MAX_LINKS_JSON - jsonPos, "]");
+    encoder.endArray(&encoder);
+    linksJson[jsonBufferPos] = '\0';
 
     cmark_iter_free(iter);
     cmark_node_free(doc);
@@ -366,44 +388,11 @@ static int renderPage(lua_State* L) {
 
 #define MAX_JSON_SIZE 65536
 
-// Helper to escape a string for JSON
-static int escapeJsonString(char* dest, int destSize, const char* src, int srcLen) {
-    int pos = 0;
-    for (int i = 0; i < srcLen && pos < destSize - 6; i++) {
-        unsigned char c = (unsigned char)src[i];
-        if (c == '"') {
-            dest[pos++] = '\\';
-            dest[pos++] = '"';
-        } else if (c == '\\') {
-            dest[pos++] = '\\';
-            dest[pos++] = '\\';
-        } else if (c == '\n') {
-            dest[pos++] = '\\';
-            dest[pos++] = 'n';
-        } else if (c == '\r') {
-            dest[pos++] = '\\';
-            dest[pos++] = 'r';
-        } else if (c == '\t') {
-            dest[pos++] = '\\';
-            dest[pos++] = 't';
-        } else if (c < 32) {
-            // Skip other control characters
-        } else {
-            dest[pos++] = c;
-        }
-    }
-    dest[pos] = '\0';
-    return pos;
-}
-
 // Recursive function to serialize DOM node to JSON
-static int serializeNode(lxb_dom_node_t *node, char* json, int jsonSize, int pos) {
-    if (node == NULL || pos >= jsonSize - 100) {
-        return pos;
-    }
+static void serializeNode(lxb_dom_node_t *node, json_encoder* enc, int* first) {
+    if (node == NULL) return;
 
-    int first = 1;
-    while (node != NULL && pos < jsonSize - 100) {
+    while (node != NULL) {
         if (node->type == LXB_DOM_NODE_TYPE_ELEMENT) {
             lxb_dom_element_t *element = lxb_dom_interface_element(node);
 
@@ -420,64 +409,50 @@ static int serializeNode(lxb_dom_node_t *node, char* json, int jsonSize, int pos
                 }
             }
 
-            if (!first) {
-                pos += snprintf(json + pos, jsonSize - pos, ",");
-            }
-            first = 0;
+            enc->addArrayMember(enc);
+            enc->startTable(enc);
 
-            pos += snprintf(json + pos, jsonSize - pos, "{\"tag\":\"");
-            if (tagName && tagLen > 0) {
-                // Lowercase the tag name
-                for (size_t i = 0; i < tagLen && pos < jsonSize - 10; i++) {
-                    char c = tagName[i];
-                    if (c >= 'A' && c <= 'Z') c += 32;
-                    json[pos++] = c;
-                }
+            // Tag name (lowercase)
+            enc->addTableMember(enc, "tag", 3);
+            char lowerTag[64];
+            for (size_t i = 0; i < tagLen && i < 63; i++) {
+                char c = tagName[i];
+                lowerTag[i] = (c >= 'A' && c <= 'Z') ? c + 32 : c;
             }
-            pos += snprintf(json + pos, jsonSize - pos, "\"");
+            lowerTag[tagLen < 63 ? tagLen : 63] = '\0';
+            enc->writeString(enc, lowerTag, (int)strlen(lowerTag));
 
             // Serialize attributes
             lxb_dom_attr_t *attr = lxb_dom_element_first_attribute(element);
             if (attr != NULL) {
-                pos += snprintf(json + pos, jsonSize - pos, ",\"attrs\":{");
-                int firstAttr = 1;
-                while (attr != NULL && pos < jsonSize - 200) {
-                    if (!firstAttr) {
-                        pos += snprintf(json + pos, jsonSize - pos, ",");
-                    }
-                    firstAttr = 0;
-
+                enc->addTableMember(enc, "attrs", 5);
+                enc->startTable(enc);
+                while (attr != NULL) {
                     size_t nameLen, valueLen;
                     const lxb_char_t *attrName = lxb_dom_attr_qualified_name(attr, &nameLen);
                     const lxb_char_t *attrValue = lxb_dom_attr_value(attr, &valueLen);
 
-                    pos += snprintf(json + pos, jsonSize - pos, "\"");
                     if (attrName && nameLen > 0) {
-                        char escaped[256];
-                        escapeJsonString(escaped, sizeof(escaped), (const char*)attrName, (int)nameLen);
-                        pos += snprintf(json + pos, jsonSize - pos, "%s", escaped);
+                        enc->addTableMember(enc, (const char*)attrName, (int)nameLen);
+                        enc->writeString(enc, attrValue ? (const char*)attrValue : "", attrValue ? (int)valueLen : 0);
                     }
-                    pos += snprintf(json + pos, jsonSize - pos, "\":\"");
-                    if (attrValue && valueLen > 0) {
-                        char escaped[1024];
-                        escapeJsonString(escaped, sizeof(escaped), (const char*)attrValue, (int)valueLen);
-                        pos += snprintf(json + pos, jsonSize - pos, "%s", escaped);
-                    }
-                    pos += snprintf(json + pos, jsonSize - pos, "\"");
 
                     attr = lxb_dom_element_next_attribute(attr);
                 }
-                pos += snprintf(json + pos, jsonSize - pos, "}");
+                enc->endTable(enc);
             }
 
             // Serialize children
             if (node->first_child != NULL) {
-                pos += snprintf(json + pos, jsonSize - pos, ",\"children\":[");
-                pos = serializeNode(node->first_child, json, jsonSize, pos);
-                pos += snprintf(json + pos, jsonSize - pos, "]");
+                enc->addTableMember(enc, "children", 8);
+                enc->startArray(enc);
+                int childFirst = 1;
+                serializeNode(node->first_child, enc, &childFirst);
+                enc->endArray(enc);
             }
 
-            pos += snprintf(json + pos, jsonSize - pos, "}");
+            enc->endTable(enc);
+            *first = 0;
 
         } else if (node->type == LXB_DOM_NODE_TYPE_TEXT) {
             lxb_dom_character_data_t *char_data = lxb_dom_interface_character_data(node);
@@ -485,25 +460,17 @@ static int serializeNode(lxb_dom_node_t *node, char* json, int jsonSize, int pos
             size_t textLen = char_data->data.length;
 
             if (textContent && textLen > 0) {
-                if (!first) {
-                    pos += snprintf(json + pos, jsonSize - pos, ",");
-                }
-                first = 0;
-
-                pos += snprintf(json + pos, jsonSize - pos, "{\"text\":\"");
-                char escaped[4096];
-                escapeJsonString(escaped, sizeof(escaped), (const char*)textContent, (int)textLen);
-                pos += snprintf(json + pos, jsonSize - pos, "%s", escaped);
-                pos += snprintf(json + pos, jsonSize - pos, "\"}");
+                enc->addArrayMember(enc);
+                enc->startTable(enc);
+                enc->addTableMember(enc, "text", 4);
+                enc->writeString(enc, (const char*)textContent, (int)textLen);
+                enc->endTable(enc);
+                *first = 0;
             }
-            // Empty text nodes are skipped, don't update first
         }
-        // Skip other node types (comments, etc.)
 
         node = node->next;
     }
-
-    return pos;
 }
 
 // Parse HTML and return JSON DOM tree
@@ -538,23 +505,33 @@ static int parseHTML(lua_State* L) {
         return 1;
     }
 
-    // Allocate JSON buffer
+    // Set up JSON encoder
     static char json[MAX_JSON_SIZE];
-    int pos = 0;
+    jsonBuffer = json;
+    jsonBufferPos = 0;
+    jsonBufferSize = MAX_JSON_SIZE;
+
+    json_encoder enc;
+    pd->json->initEncoder(&enc, jsonWrite, NULL, 0);
 
     // Start with root object containing the document
-    pos += snprintf(json + pos, MAX_JSON_SIZE - pos, "{\"children\":[");
+    enc.startTable(&enc);
+    enc.addTableMember(&enc, "children", 8);
+    enc.startArray(&enc);
 
     // Serialize the document body (or full document if no body)
     lxb_dom_node_t *root = lxb_dom_interface_node(document);
+    int first = 1;
     if (document->body != NULL) {
         root = lxb_dom_interface_node(document->body);
-        pos = serializeNode(root->first_child, json, MAX_JSON_SIZE, pos);
+        serializeNode(root->first_child, &enc, &first);
     } else if (root->first_child != NULL) {
-        pos = serializeNode(root->first_child, json, MAX_JSON_SIZE, pos);
+        serializeNode(root->first_child, &enc, &first);
     }
 
-    pos += snprintf(json + pos, MAX_JSON_SIZE - pos, "]}");
+    enc.endArray(&enc);
+    enc.endTable(&enc);
+    json[jsonBufferPos] = '\0';
 
     // Cleanup
     lxb_html_document_destroy(document);
