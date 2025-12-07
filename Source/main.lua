@@ -332,7 +332,7 @@ end
 function parseURL(url)
 	local secure = string.match(url, "^https://") ~= nil
 	local host = string.match(url, "^https?://([^/]+)")
-	local path = string.match(url, "^https?://[^/]+(.*)") or "/"
+	local path = string.match(url, "^https?://[^/]+(/.*)") or "/"
 	local port = secure and 443 or 80
 	return host, port, secure, path
 end
@@ -355,7 +355,8 @@ function fetchPage(url)
 	cursor.blinker:start()
 
 	local host, port, secure, path = parseURL(url)
-	local conn = net.http.new(host, port, secure, "ORBIT")
+	print("host port secure path" .. host .. " " .. port .. " " .. path)
+	local conn = net.http.new(host, port, secure, "Mozilla/5.0 ORBIT/1.0")
 	if not conn then
 		nav.pending = false
 		return
@@ -528,7 +529,7 @@ end
 
 function playdate.update()
 	if not nav.initialPageLoaded then
-		fetchPage(tutorial)
+		fetchPage("https://text.npr.org")
 		nav.initialPageLoaded = true
 	end
 

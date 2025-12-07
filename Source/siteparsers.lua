@@ -158,14 +158,17 @@ local function parseNPRFrontpage(dom)
 	local ir = {}
 
 	-- Add title
-	table.insert(ir, {kind = "plain", text = "NPR News"})
+	table.insert(ir, {kind = "plain", text = "NPR"})
+	table.insert(ir, {kind = "plain", text = " News"})
 	table.insert(ir, {kind = "newline"})
 	table.insert(ir, {kind = "newline"})
 
 	-- Find all links in the main list
 	local allLinks = findAllByTag(dom, "a")
+	print("Found", #allLinks, "links")
 
 	for _, link in ipairs(allLinks) do
+		print("Link:", link.attrs and link.attrs.href or "no href")
 		local href = link.attrs and link.attrs.href or ""
 
 		-- Only include article links (start with / and contain story IDs)
@@ -182,6 +185,7 @@ local function parseNPRFrontpage(dom)
 		end
 	end
 
+	print("Frontpage IR elements:", #ir)
 	return ir
 end
 
@@ -235,6 +239,7 @@ local function parseNPRArticle(dom)
 		end
 	end
 
+	print("IR elements:", #ir)
 	return ir
 end
 
@@ -274,14 +279,25 @@ function siteparsers.parse(url, htmlString)
 	end
 
 	-- Parse HTML to DOM
+	print("HTML input length:", #htmlString)
 	local jsonStr = html.parse(htmlString)
 	if not jsonStr then
 		return nil, "Failed to parse HTML"
 	end
 
+	print("JSON length:", #jsonStr)
+
 	local dom = json.decode(jsonStr)
 	if not dom then
 		return nil, "Failed to decode JSON"
+	end
+
+	print("DOM tag:", dom.tag or "none", "children:", dom.children and #dom.children or 0)
+	-- Print first level children
+	if dom.children then
+		for i, child in ipairs(dom.children) do
+			print("  Child", i, "tag:", child.tag or "text", "text:", child.text and child.text:sub(1, 50) or "nil")
+		end
 	end
 
 	-- Run site-specific parser
