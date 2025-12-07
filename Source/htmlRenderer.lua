@@ -1,4 +1,4 @@
--- html.lua
+-- htmlRenderer.lua
 -- HTML rendering support for ORBIT
 --
 -- IR (Intermediate Representation) format:
@@ -23,11 +23,11 @@ function htmlRenderer.render(ir, font, pageWidth, padding)
 	local contentWidth = pageWidth - 2 * padding
 	local lineHeight = font:getHeight()
 	local tracking = font:getTracking()
+	-- Space width + tracking on both sides (since we draw words separately)
+	local spaceWidth = font:getTextWidth(" ") + 2 * tracking
 
 	local x = 0
 	local y = 0
-	local links = {}
-	local currentLink = nil  -- {url, segments}
 
 	-- First pass: layout all elements to calculate positions
 	local layoutItems = {}  -- {text, x, y, w, isLink, url}
@@ -43,9 +43,10 @@ function htmlRenderer.render(ir, font, pageWidth, padding)
 				table.insert(words, word)
 			end
 
-			-- Handle leading space
-			if text:match("^%s") and x > 0 then
-				x = x + font:getTextWidth(" ")
+			-- Add space before this element if we're not at line start
+			-- and the text has content (handles space between elements)
+			if x > 0 and #words > 0 then
+				x = x + spaceWidth
 			end
 
 			for i, word in ipairs(words) do
@@ -71,19 +72,34 @@ function htmlRenderer.render(ir, font, pageWidth, padding)
 
 				-- Add space after word (except last)
 				if i < #words then
-					x = x + font:getTextWidth(" ")
+					x = x + spaceWidth
 				end
-			end
-
-			-- Handle trailing space
-			if text:match("%s$") then
-				x = x + font:getTextWidth(" ")
 			end
 		end
 	end
 
 	-- Calculate page height
 	local pageHeight = math.max(240, y + lineHeight + 30)
+
+	-- Collect link segments BEFORE drawing, so we can merge them per line
+	local linkMap = {}  -- url -> {segments by line}
+	for _, item in ipairs(layoutItems) do
+		if item.isLink and item.url then
+			if not linkMap[item.url] then
+				linkMap[item.url] = {url = item.url, lineSegments = {}}
+			end
+			-- Group by y position (line)
+			local lineKey = item.y
+			if not linkMap[item.url].lineSegments[lineKey] then
+				linkMap[item.url].lineSegments[lineKey] = {x = item.x, y = item.y, w = item.w}
+			else
+				-- Extend existing segment on this line
+				local seg = linkMap[item.url].lineSegments[lineKey]
+				local newRight = item.x + item.w
+				seg.w = newRight - seg.x
+			end
+		end
+	end
 
 	-- Second pass: create image and draw text
 	local pageImage = gfx.image.new(pageWidth, pageHeight, gfx.kColorWhite)
@@ -92,35 +108,26 @@ function htmlRenderer.render(ir, font, pageWidth, padding)
 
 	for _, item in ipairs(layoutItems) do
 		gfx.drawText(item.text, padding + item.x, padding + item.y)
+	end
 
-		-- Draw underline for links
-		if item.isLink then
-			local underlineY = padding + item.y + lineHeight - 2
-			gfx.drawLine(padding + item.x, underlineY,
-			             padding + item.x + item.w, underlineY)
+	-- Draw underlines for links (merged per line)
+	for _, linkData in pairs(linkMap) do
+		for _, seg in pairs(linkData.lineSegments) do
+			local underlineY = padding + seg.y + lineHeight - 2
+			gfx.drawLine(padding + seg.x, underlineY, padding + seg.x + seg.w, underlineY)
 		end
 	end
 
 	gfx.popContext()
 
-	-- Third pass: collect link segments
-	local linkMap = {}  -- url -> {segments}
-	for _, item in ipairs(layoutItems) do
-		if item.isLink and item.url then
-			if not linkMap[item.url] then
-				linkMap[item.url] = {url = item.url, segments = {}}
-			end
-			table.insert(linkMap[item.url].segments, {
-				x = item.x,
-				y = item.y,
-				w = item.w
-			})
-		end
-	end
-
-	-- Convert to array
+	-- Convert linkMap to array format with segments array
+	local links = {}
 	for _, linkData in pairs(linkMap) do
-		table.insert(links, linkData)
+		local segments = {}
+		for _, seg in pairs(linkData.lineSegments) do
+			table.insert(segments, {x = seg.x, y = seg.y, w = seg.w})
+		end
+		table.insert(links, {url = linkData.url, segments = segments})
 	end
 
 	return pageImage, pageHeight, links

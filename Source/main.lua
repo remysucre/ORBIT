@@ -355,7 +355,6 @@ function fetchPage(url)
 	cursor.blinker:start()
 
 	local host, port, secure, path = parseURL(url)
-	print("host port secure path" .. host .. " " .. port .. " " .. path)
 	local conn = net.http.new(host, port, secure, "Mozilla/5.0 ORBIT/1.0")
 	if not conn then
 		nav.pending = false
