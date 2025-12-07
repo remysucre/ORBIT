@@ -155,6 +155,13 @@ local viewport = {
 	top = 0
 }
 
+-- Background sprite (behind everything for transparent page areas)
+local background = gfx.sprite.new()
+background:setCenter(0, 0)
+background:moveTo(0, 0)
+background:setZIndex(-2)  -- Behind links (-1) and page (0)
+background:add()
+
 -- Page initialization
 function initializePage()
 	local page = gfx.sprite.new()
@@ -185,8 +192,9 @@ function viewport:moveTo(newTop)
 	local dy = self.top - newTop
 	self.top = newTop
 
-	-- Move page and all link sprites
+	-- Move page, background, and all link sprites
 	page:moveBy(0, dy)
+	background:moveBy(0, dy)
 	for _, link in ipairs(links) do
 		link:moveBy(0, dy)
 	end
@@ -287,7 +295,7 @@ function Link:init(url, segments)
 	self:setSize(self.width, self.height)
 	self:setCenter(0, 0)
 	self:moveTo(PAGE_PADDING + minX, PAGE_PADDING + minY)
-	self:setZIndex(-1)
+	self:setZIndex(-1)  -- Behind page
 	self:setCollideRect(0, 0, self.width, self.height)
 
 	self:updateImage()
@@ -295,7 +303,6 @@ function Link:init(url, segments)
 end
 
 function Link:updateImage()
-	print("Update")
 	local img = gfx.image.new(self.width, self.height, gfx.kColorClear)
 	gfx.pushContext(img)
 
@@ -306,11 +313,11 @@ function Link:updateImage()
 		local localX = seg.x - self.offsetX
 		local localY = seg.y - self.offsetY
 
-		-- White fill for alpha collision
+		-- White fill for background and alpha collision
 		gfx.setColor(gfx.kColorWhite)
 		gfx.fillRect(localX, localY, seg.w, h)
 
-		-- Underline
+		-- Underline (thicker when hovered)
 		gfx.setColor(gfx.kColorBlack)
 		gfx.drawLine(localX, localY + h - 2, localX + seg.w, localY + h - 2)
 		if lineWidth == 2 then
@@ -325,9 +332,6 @@ end
 function Link:update()
 	local wasHovered = self.isHovered
 	self.isHovered = cursor:alphaCollision(self)
-	if self.isHovered then
-		print("Hovered:", self.url:sub(1, 30))
-	end
 	if self.isHovered ~= wasHovered then
 		self:updateImage()
 	end
@@ -445,6 +449,11 @@ function render(text, url)
 	page.height = pageHeight
 	page:setImage(pageImage)
 	page:moveTo(0, 0)
+
+	-- Set background to match page size
+	local bgImage = gfx.image.new(page.width, pageHeight, gfx.kColorWhite)
+	background:setImage(bgImage)
+	background:moveTo(0, 0)
 
 	-- Create Link sprites
 	for _, data in ipairs(linkData) do

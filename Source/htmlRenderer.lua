@@ -101,8 +101,8 @@ function htmlRenderer.render(ir, font, pageWidth, padding)
 		end
 	end
 
-	-- Second pass: create image and draw text
-	local pageImage = gfx.image.new(pageWidth, pageHeight, gfx.kColorWhite)
+	-- Second pass: create image and draw text (transparent background)
+	local pageImage = gfx.image.new(pageWidth, pageHeight, gfx.kColorClear)
 	gfx.pushContext(pageImage)
 	gfx.setFont(font)
 
@@ -110,14 +110,7 @@ function htmlRenderer.render(ir, font, pageWidth, padding)
 		gfx.drawText(item.text, padding + item.x, padding + item.y)
 	end
 
-	-- Draw underlines for links (merged per line)
-	for _, linkData in pairs(linkMap) do
-		for _, seg in pairs(linkData.lineSegments) do
-			local underlineY = padding + seg.y + lineHeight - 2
-			gfx.drawLine(padding + seg.x, underlineY, padding + seg.x + seg.w, underlineY)
-		end
-	end
-
+	-- Don't draw underlines here - Link sprites handle them
 	gfx.popContext()
 
 	-- Convert linkMap to array format with segments array
