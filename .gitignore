@@ -7,3 +7,6 @@ Source/pdex.elf
 
 # Compiled Playdate bundle
 ORBIT.pdx/
+
+# Fonts copied from submodule
+Source/fonts/cuniform-*.fnt

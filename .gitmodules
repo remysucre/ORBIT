@@ -4,3 +4,6 @@
 [submodule "lexbor"]
 	path = lexbor
 	url = git@github.com:lexbor/lexbor.git
+[submodule "cuniform"]
+	path = cuniform
+	url = https://github.com/remysucre/cuniform.git

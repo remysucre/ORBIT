@@ -29,7 +29,7 @@ Because of limitations of the Playdate console, ORBIT cannot (and never will) su
 
 **DRAWING MISSING FONTS**
 
-ORBIT uses a hand-drawn font called cuniform designed specifically for the playdate. It covers most of the common characters, but you might be surprised how many characters there are on the internet! Whenever you see �, it means that character is missing in our font. You can figure out what character it is by visiting the same page on your computer, and use https://play.date/caps/ to draw your favorite design!
+ORBIT uses a hand-drawn font called [cuniform](https://github.com/remysucre/cuniform) designed specifically for the playdate. It covers most of the common characters, but you might be surprised how many characters there are on the internet! Whenever you see �, it means that character is missing in our font. You can figure out what character it is by visiting the same page on your computer, and use https://play.date/caps/ to draw your favorite design!
 
 
 **ACKNOWLEDGEMENT**

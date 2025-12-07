@@ -228,7 +228,14 @@ ULIBDIR =
 # List all user libraries here
 ULIBS =
 
+# Copy font files from submodule
+fonts:
+	cp cuniform/*.fnt Source/fonts/
+
 include $(SDK)/C_API/buildsupport/common.mk
+
+# Ensure fonts are copied before building
+all: fonts
 
 # Override simulator build to include UDEFS
 $(OBJDIR)/pdex.${DYLIB_EXT}: $(SRC) | MKOBJDIR
