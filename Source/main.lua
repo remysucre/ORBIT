@@ -155,13 +155,6 @@ local viewport = {
 	top = 0
 }
 
--- Background sprite (behind everything for transparent page areas)
-local background = gfx.sprite.new()
-background:setCenter(0, 0)
-background:moveTo(0, 0)
-background:setZIndex(-2)  -- Behind links (-1) and page (0)
-background:add()
-
 -- Page initialization
 function initializePage()
 	local page = gfx.sprite.new()
@@ -192,9 +185,8 @@ function viewport:moveTo(newTop)
 	local dy = self.top - newTop
 	self.top = newTop
 
-	-- Move page, background, and all link sprites
+	-- Move page and all link sprites
 	page:moveBy(0, dy)
-	background:moveBy(0, dy)
 	for _, link in ipairs(links) do
 		link:moveBy(0, dy)
 	end
@@ -449,11 +441,6 @@ function render(text, url)
 	page.height = pageHeight
 	page:setImage(pageImage)
 	page:moveTo(0, 0)
-
-	-- Set background to match page size
-	local bgImage = gfx.image.new(page.width, pageHeight, gfx.kColorWhite)
-	background:setImage(bgImage)
-	background:moveTo(0, 0)
 
 	-- Create Link sprites
 	for _, data in ipairs(linkData) do
