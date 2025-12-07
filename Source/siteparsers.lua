@@ -239,85 +239,6 @@ local function parseNPRArticle(dom)
 end
 
 -- =============================================================================
--- CBC Lite Frontpage Parser
--- =============================================================================
-
-local function parseCBCFrontpage(dom)
-	local ir = {}
-
-	-- Add title
-	table.insert(ir, {kind = "plain", text = "CBC News"})
-	table.insert(ir, {kind = "newline"})
-	table.insert(ir, {kind = "newline"})
-
-	-- Find all links
-	local allLinks = findAllByTag(dom, "a")
-
-	for _, link in ipairs(allLinks) do
-		local href = link.attrs and link.attrs.href or ""
-
-		-- Only include lite story links
-		if href:match("/lite/story/") then
-			local headline = cleanText(extractText(link))
-			if headline and #headline > 0 then
-				-- Make full URL if relative
-				local fullUrl = href
-				if href:match("^/") then
-					fullUrl = "https://www.cbc.ca" .. href
-				end
-
-				table.insert(ir, {kind = "link", text = headline, url = fullUrl})
-				table.insert(ir, {kind = "newline"})
-				table.insert(ir, {kind = "newline"})
-			end
-		end
-	end
-
-	return ir
-end
-
--- =============================================================================
--- CBC Lite Article Parser
--- =============================================================================
-
-local function parseCBCArticle(dom)
-	local ir = {}
-
-	-- Find title (h1 or h2)
-	local titleNode = findByTag(dom, "h1") or findByTag(dom, "h2")
-	if titleNode then
-		local title = cleanText(extractText(titleNode))
-		if title then
-			table.insert(ir, {kind = "plain", text = title})
-			table.insert(ir, {kind = "newline"})
-			table.insert(ir, {kind = "newline"})
-		end
-	end
-
-	-- Find all paragraphs
-	local paragraphs = findAllByTag(dom, "p")
-	local metaCount = 0
-
-	for _, p in ipairs(paragraphs) do
-		local text = cleanText(extractText(p))
-		if text and #text > 0 then
-			-- First 2 paragraphs are usually meta (date, byline)
-			if metaCount < 2 and #text < 100 then
-				table.insert(ir, {kind = "plain", text = text})
-				table.insert(ir, {kind = "newline"})
-				metaCount = metaCount + 1
-			else
-				table.insert(ir, {kind = "plain", text = text})
-				table.insert(ir, {kind = "newline"})
-				table.insert(ir, {kind = "newline"})
-			end
-		end
-	end
-
-	return ir
-end
-
--- =============================================================================
 -- CSMonitor Text Edition Frontpage Parser
 -- =============================================================================
 
@@ -450,16 +371,6 @@ siteparsers.parsers = {
 		name = "NPR Article",
 		pattern = "^https?://text%.npr%.org/.*",
 		parse = parseNPRArticle
-	},
-	{
-		name = "CBC Lite Frontpage",
-		pattern = "^https?://www%.cbc%.ca/lite/?$",
-		parse = parseCBCFrontpage
-	},
-	{
-		name = "CBC Lite Article",
-		pattern = "^https?://www%.cbc%.ca/lite/story/.*",
-		parse = parseCBCArticle
 	},
 	{
 		name = "CSMonitor Frontpage",

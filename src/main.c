@@ -404,17 +404,26 @@ static int serializeNode(lxb_dom_node_t *node, char* json, int jsonSize, int pos
 
     int first = 1;
     while (node != NULL && pos < jsonSize - 100) {
-        if (!first) {
-            pos += snprintf(json + pos, jsonSize - pos, ",");
-        }
-        first = 0;
-
         if (node->type == LXB_DOM_NODE_TYPE_ELEMENT) {
             lxb_dom_element_t *element = lxb_dom_interface_element(node);
 
             // Get tag name
             size_t tagLen;
             const lxb_char_t *tagName = lxb_dom_element_qualified_name(element, &tagLen);
+
+            // Skip script and style tags entirely
+            if (tagName && tagLen > 0) {
+                if ((tagLen == 6 && strncasecmp((const char*)tagName, "script", 6) == 0) ||
+                    (tagLen == 5 && strncasecmp((const char*)tagName, "style", 5) == 0)) {
+                    node = node->next;
+                    continue;
+                }
+            }
+
+            if (!first) {
+                pos += snprintf(json + pos, jsonSize - pos, ",");
+            }
+            first = 0;
 
             pos += snprintf(json + pos, jsonSize - pos, "{\"tag\":\"");
             if (tagName && tagLen > 0) {
@@ -476,14 +485,18 @@ static int serializeNode(lxb_dom_node_t *node, char* json, int jsonSize, int pos
             size_t textLen = char_data->data.length;
 
             if (textContent && textLen > 0) {
+                if (!first) {
+                    pos += snprintf(json + pos, jsonSize - pos, ",");
+                }
+                first = 0;
+
                 pos += snprintf(json + pos, jsonSize - pos, "{\"text\":\"");
                 char escaped[4096];
                 escapeJsonString(escaped, sizeof(escaped), (const char*)textContent, (int)textLen);
                 pos += snprintf(json + pos, jsonSize - pos, "%s", escaped);
                 pos += snprintf(json + pos, jsonSize - pos, "\"}");
-            } else {
-                first = 1; // Empty text node, don't count as an item
             }
+            // Empty text nodes are skipped, don't update first
         }
         // Skip other node types (comments, etc.)
 
