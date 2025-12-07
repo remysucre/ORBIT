@@ -295,6 +295,7 @@ function Link:init(url, segments)
 end
 
 function Link:updateImage()
+	print("Update")
 	local img = gfx.image.new(self.width, self.height, gfx.kColorClear)
 	gfx.pushContext(img)
 
@@ -324,6 +325,9 @@ end
 function Link:update()
 	local wasHovered = self.isHovered
 	self.isHovered = cursor:alphaCollision(self)
+	if self.isHovered then
+		print("Hovered:", self.url:sub(1, 30))
+	end
 	if self.isHovered ~= wasHovered then
 		self:updateImage()
 	end
