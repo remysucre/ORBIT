@@ -10,7 +10,7 @@ Connect your playdate to a computer with USB and follow [instructions](https://h
 
 ## Contributing
 
-There are many ways to contribute to ORBIT, including [writing your own web page](#writing-web-pages-for-orbit), [adding a site parser](#adding-site-parsers) for an HTML page, or even [drawing missing fonts](#drawing-missing-fonts).
+There are many ways to contribute to ORBIT, including [writing your own web page](#writing-web-pages-for-orbit), adding a [site parser](#adding-site-parsers) for an HTML page, or even [drawing missing fonts](#drawing-missing-fonts).
 
 ### Writing web pages for ORBIT
 
