@@ -1,4 +1,4 @@
-Welcome to ORBIT, a web browser for Playdate!
+Welcome to ORBIT, a web browser for Playdate
 
 ![ORBIT demo](demo.gif)
 
@@ -17,11 +17,11 @@ Connect your playdate to a computer with USB and follow [instructions](https://h
 
 **CONTRIBUTING**
 
-There are many ways to contribute to ORBIT, including writing your own web page, adding a site parser for an HTML page, or even drawing missing fonts!
+There are many ways to contribute to ORBIT, including writing your own web page, adding a site parser for an HTML page, or even drawing missing fonts.
 
 **WRITING WEB PAGES FOR ORBIT**
 
-ORBIT currently supports two formats, markdown and HTML. If you are writing your own page from scratch, you should do it in markdown. ORBIT uses the cmark library from the Commonmark project to parse markdowns, so you can refer to commonmark.org for the syntax. Currently we only render plain text and links, and PRs are welcome to support other elements!
+ORBIT currently supports two formats, markdown and HTML. If you are writing your own page from scratch, you should do it in markdown. ORBIT uses the cmark library from the Commonmark project to parse markdowns, so you can refer to commonmark.org for the syntax. Currently we only render plain text and links, and PRs are welcome to support other elements.
 
 **ADDING SITE PARSERS**
 
@@ -29,7 +29,7 @@ Because of limitations of the Playdate console, ORBIT cannot (and never will) su
 
 **DRAWING MISSING FONTS**
 
-ORBIT uses a hand-drawn font called [cuniform](https://github.com/remysucre/cuniform) designed specifically for the playdate. It covers most of the common characters, but you might be surprised how many characters there are on the internet! Whenever you see �, it means that character is missing in our font. You can figure out what character it is by visiting the same page on your computer, and use https://play.date/caps/ to draw your favorite design!
+ORBIT uses a hand-drawn font called [cuniform](https://github.com/remysucre/cuniform) designed specifically for the playdate. It covers most of the common characters, but you might be surprised how many characters there are on the internet! Whenever you see �, it means that character is missing in our font. You can figure out what character it is by visiting the same page on your computer, and use https://play.date/caps/ to draw your favorite design.
 
 
 **ACKNOWLEDGEMENT**
