@@ -1,6 +1,8 @@
 import "CoreLibs/graphics"
 import "CoreLibs/sprites"
 import "CoreLibs/animation"
+import "htmlRenderer"
+import "siteparsers"
 
 local gfx = playdate.graphics
 local geo = playdate.geometry
@@ -285,7 +287,7 @@ function Link:init(url, segments)
 	self:setSize(self.width, self.height)
 	self:setCenter(0, 0)
 	self:moveTo(PAGE_PADDING + minX, PAGE_PADDING + minY)
-	self:setZIndex(-1)
+	self:setZIndex(-1)  -- Behind page
 	self:setCollideRect(0, 0, self.width, self.height)
 
 	self:updateImage()
@@ -307,7 +309,7 @@ function Link:updateImage()
 		gfx.setColor(gfx.kColorWhite)
 		gfx.fillRect(localX, localY, seg.w, h)
 
-		-- Underline
+		-- Underline (thicker when hovered)
 		gfx.setColor(gfx.kColorBlack)
 		gfx.drawLine(localX, localY + h - 2, localX + seg.w, localY + h - 2)
 		if lineWidth == 2 then
@@ -330,7 +332,7 @@ end
 function parseURL(url)
 	local secure = string.match(url, "^https://") ~= nil
 	local host = string.match(url, "^https?://([^/]+)")
-	local path = string.match(url, "^https?://[^/]+(.*)") or "/"
+	local path = string.match(url, "^https?://[^/]+(/.*)") or "/"
 	local port = secure and 443 or 80
 	return host, port, secure, path
 end
@@ -353,7 +355,7 @@ function fetchPage(url)
 	cursor.blinker:start()
 
 	local host, port, secure, path = parseURL(url)
-	local conn = net.http.new(host, port, secure, "ORBIT")
+	local conn = net.http.new(host, port, secure)
 	if not conn then
 		nav.pending = false
 		return
@@ -378,7 +380,7 @@ function fetchPage(url)
 			return
 		end
 
-		local success = pcall(render, nav.buffer)
+		local success = pcall(render, nav.buffer, url)
 		if not success then
 			nav.pending = false
 			return
@@ -394,7 +396,7 @@ function fetchPage(url)
 	conn:get(path)
 end
 
-function render(text)
+function render(text, url)
 	-- Remove old link sprites
 	for _, link in ipairs(links) do
 		link:remove()
@@ -402,23 +404,45 @@ function render(text)
 	links = {}
 	viewport.top = 0
 
-	-- C returns image, height, and links as JSON
-	local pageImage, pageHeight, linksJson = cmark.render(
-		text, page.width, page.padding, fnt:getTracking())
+	local pageImage, pageHeight, linkData
+
+	if url and url:match("%.md$") then
+		-- Markdown path: use cmark
+		local linksJson
+		pageImage, pageHeight, linksJson = cmark.render(
+			text, page.width, page.padding, fnt:getTracking())
+		if not pageImage then return end
+
+		-- Decode JSON links from cmark
+		linkData = {}
+		local jsonData = json.decode(linksJson) or {}
+		for _, data in ipairs(jsonData) do
+			local segments = {}
+			for _, seg in ipairs(data.segments) do
+				table.insert(segments, {x = seg[1], y = seg[2], w = seg[3]})
+			end
+			table.insert(linkData, {url = data.url, segments = segments})
+		end
+	else
+		-- HTML path
+		local ir, err = siteparsers.parse(url, text)
+		if ir then
+			pageImage, pageHeight, linkData = htmlRenderer.render(ir, fnt, page.width, page.padding)
+		else
+			print("HTML parse error:", err)
+			return
+		end
+	end
+
 	if not pageImage then return end
 
 	page.height = pageHeight
 	page:setImage(pageImage)
 	page:moveTo(0, 0)
 
-	-- Decode JSON and create Link sprites
-	local linkData = json.decode(linksJson) or {}
+	-- Create Link sprites
 	for _, data in ipairs(linkData) do
-		local segments = {}
-		for _, seg in ipairs(data.segments) do
-			table.insert(segments, {x = seg[1], y = seg[2], w = seg[3]})
-		end
-		table.insert(links, Link(data.url, segments))
+		table.insert(links, Link(data.url, data.segments))
 	end
 end
 
@@ -502,7 +526,7 @@ end
 
 function playdate.update()
 	if not nav.initialPageLoaded then
-		fetchPage(tutorial)
+		fetchPage("https://text.npr.org/")
 		nav.initialPageLoaded = true
 	end
 

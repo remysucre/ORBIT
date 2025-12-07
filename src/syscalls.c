@@ -15,6 +15,36 @@ void _exit(int status) {
     while(1);
 }
 
+// Environment stubs (needed by lexbor)
+char* getenv(const char* name) {
+    (void)name;
+    return NULL;
+}
+
+// sbrk for memory allocation (required by newlib malloc, needed by lexbor)
+extern char _end; // Defined by linker script
+static char *heap_end = 0;
+
+void* _sbrk(int incr) {
+    char *prev_heap_end;
+
+    if (heap_end == 0) {
+        heap_end = &_end;
+    }
+    prev_heap_end = heap_end;
+    heap_end += incr;
+    return (void *)prev_heap_end;
+}
+
+// Open - not supported (needed by lexbor)
+int _open(const char *name, int flags, int mode) {
+    (void)name;
+    (void)flags;
+    (void)mode;
+    errno = ENOENT;
+    return -1;
+}
+
 // Close - not supported
 int _close(int file) {
     (void)file;
