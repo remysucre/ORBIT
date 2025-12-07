@@ -1,6 +1,8 @@
 import "CoreLibs/graphics"
 import "CoreLibs/sprites"
 import "CoreLibs/animation"
+import "htmlRenderer"
+import "siteparsers"
 
 local gfx = playdate.graphics
 local geo = playdate.geometry
@@ -173,29 +175,6 @@ local page = initializePage()
 
 -- Initialize C renderer (font cache only)
 cmark.initRenderer("fonts/cuniform-heavy")
-
--- Test HTML parsing
-local testHTML = [[
-<html>
-<head><title>Test Page</title></head>
-<body>
-<h1>Hello World</h1>
-<p>This is a <a href="https://example.com">link</a> in a paragraph.</p>
-<ul>
-<li>Item 1</li>
-<li>Item 2</li>
-</ul>
-</body>
-</html>
-]]
-
-local jsonResult = html.parse(testHTML)
-if jsonResult then
-	print("HTML parse result:")
-	print(jsonResult)
-else
-	print("HTML parse failed!")
-end
 
 -- Links array (populated by render())
 local links = {}
@@ -401,7 +380,7 @@ function fetchPage(url)
 			return
 		end
 
-		local success = pcall(render, nav.buffer)
+		local success = pcall(render, nav.buffer, url)
 		if not success then
 			nav.pending = false
 			return
@@ -417,7 +396,7 @@ function fetchPage(url)
 	conn:get(path)
 end
 
-function render(text)
+function render(text, url)
 	-- Remove old link sprites
 	for _, link in ipairs(links) do
 		link:remove()
@@ -425,23 +404,47 @@ function render(text)
 	links = {}
 	viewport.top = 0
 
-	-- C returns image, height, and links as JSON
-	local pageImage, pageHeight, linksJson = cmark.render(
-		text, page.width, page.padding, fnt:getTracking())
+	local pageImage, pageHeight, linkData
+
+	-- Check if we have an HTML parser for this URL
+	local parser = url and siteparsers.findParser(url)
+	if parser then
+		-- HTML path: parse → IR → render
+		local ir, err = siteparsers.parse(url, text)
+		if ir then
+			pageImage, pageHeight, linkData = htmlRenderer.render(ir, fnt, page.width, page.padding)
+		else
+			print("HTML parse error:", err)
+			return
+		end
+	else
+		-- Markdown path: use cmark
+		local linksJson
+		pageImage, pageHeight, linksJson = cmark.render(
+			text, page.width, page.padding, fnt:getTracking())
+		if not pageImage then return end
+
+		-- Decode JSON links from cmark
+		linkData = {}
+		local jsonData = json.decode(linksJson) or {}
+		for _, data in ipairs(jsonData) do
+			local segments = {}
+			for _, seg in ipairs(data.segments) do
+				table.insert(segments, {x = seg[1], y = seg[2], w = seg[3]})
+			end
+			table.insert(linkData, {url = data.url, segments = segments})
+		end
+	end
+
 	if not pageImage then return end
 
 	page.height = pageHeight
 	page:setImage(pageImage)
 	page:moveTo(0, 0)
 
-	-- Decode JSON and create Link sprites
-	local linkData = json.decode(linksJson) or {}
+	-- Create Link sprites
 	for _, data in ipairs(linkData) do
-		local segments = {}
-		for _, seg in ipairs(data.segments) do
-			table.insert(segments, {x = seg[1], y = seg[2], w = seg[3]})
-		end
-		table.insert(links, Link(data.url, segments))
+		table.insert(links, Link(data.url, data.segments))
 	end
 end
 

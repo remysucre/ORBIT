@@ -482,8 +482,7 @@ static int serializeNode(lxb_dom_node_t *node, char* json, int jsonSize, int pos
                 pos += snprintf(json + pos, jsonSize - pos, "%s", escaped);
                 pos += snprintf(json + pos, jsonSize - pos, "\"}");
             } else {
-                // Empty text node, skip it
-                first = 1; // Don't count as an item
+                first = 1; // Empty text node, don't count as an item
             }
         }
         // Skip other node types (comments, etc.)
