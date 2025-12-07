@@ -239,6 +239,204 @@ local function parseNPRArticle(dom)
 end
 
 -- =============================================================================
+-- CBC Lite Frontpage Parser
+-- =============================================================================
+
+local function parseCBCFrontpage(dom)
+	local ir = {}
+
+	-- Add title
+	table.insert(ir, {kind = "plain", text = "CBC News"})
+	table.insert(ir, {kind = "newline"})
+	table.insert(ir, {kind = "newline"})
+
+	-- Find all links
+	local allLinks = findAllByTag(dom, "a")
+
+	for _, link in ipairs(allLinks) do
+		local href = link.attrs and link.attrs.href or ""
+
+		-- Only include lite story links
+		if href:match("/lite/story/") then
+			local headline = cleanText(extractText(link))
+			if headline and #headline > 0 then
+				-- Make full URL if relative
+				local fullUrl = href
+				if href:match("^/") then
+					fullUrl = "https://www.cbc.ca" .. href
+				end
+
+				table.insert(ir, {kind = "link", text = headline, url = fullUrl})
+				table.insert(ir, {kind = "newline"})
+				table.insert(ir, {kind = "newline"})
+			end
+		end
+	end
+
+	return ir
+end
+
+-- =============================================================================
+-- CBC Lite Article Parser
+-- =============================================================================
+
+local function parseCBCArticle(dom)
+	local ir = {}
+
+	-- Find title (h1 or h2)
+	local titleNode = findByTag(dom, "h1") or findByTag(dom, "h2")
+	if titleNode then
+		local title = cleanText(extractText(titleNode))
+		if title then
+			table.insert(ir, {kind = "plain", text = title})
+			table.insert(ir, {kind = "newline"})
+			table.insert(ir, {kind = "newline"})
+		end
+	end
+
+	-- Find all paragraphs
+	local paragraphs = findAllByTag(dom, "p")
+	local metaCount = 0
+
+	for _, p in ipairs(paragraphs) do
+		local text = cleanText(extractText(p))
+		if text and #text > 0 then
+			-- First 2 paragraphs are usually meta (date, byline)
+			if metaCount < 2 and #text < 100 then
+				table.insert(ir, {kind = "plain", text = text})
+				table.insert(ir, {kind = "newline"})
+				metaCount = metaCount + 1
+			else
+				table.insert(ir, {kind = "plain", text = text})
+				table.insert(ir, {kind = "newline"})
+				table.insert(ir, {kind = "newline"})
+			end
+		end
+	end
+
+	return ir
+end
+
+-- =============================================================================
+-- CSMonitor Text Edition Frontpage Parser
+-- =============================================================================
+
+-- Find element by data attribute
+local function findByDataAttr(node, attrName, attrValue)
+	if not node then return nil end
+
+	if node.attrs and node.attrs[attrName] == attrValue then
+		return node
+	end
+
+	if node.children then
+		for _, child in ipairs(node.children) do
+			local found = findByDataAttr(child, attrName, attrValue)
+			if found then return found end
+		end
+	end
+	return nil
+end
+
+local function parseCSMonitorFrontpage(dom)
+	local ir = {}
+
+	-- Add title
+	table.insert(ir, {kind = "plain", text = "Christian Science Monitor"})
+	table.insert(ir, {kind = "newline"})
+	table.insert(ir, {kind = "newline"})
+
+	-- Find all links
+	local allLinks = findAllByTag(dom, "a")
+
+	for _, link in ipairs(allLinks) do
+		local href = link.attrs and link.attrs.href or ""
+
+		-- Include text_edition article links
+		if href:match("/text_edition/") and href:match("/20%d%d/") then
+			-- Make full URL if relative
+			local fullUrl = href
+			if href:match("^/") then
+				fullUrl = "https://www.csmonitor.com" .. href
+			end
+
+			-- Find title element (data-field="title")
+			local titleNode = findByDataAttr(link, "data-field", "title")
+			local headline = titleNode and cleanText(extractText(titleNode)) or nil
+
+			-- Find summary element (data-field="summary")
+			local summaryNode = findByDataAttr(link, "data-field", "summary")
+			local summary = summaryNode and cleanText(extractText(summaryNode)) or nil
+
+			-- Add to IR
+			if headline and #headline > 0 then
+				table.insert(ir, {kind = "link", text = headline, url = fullUrl})
+				table.insert(ir, {kind = "newline"})
+				if summary and #summary > 0 then
+					table.insert(ir, {kind = "plain", text = summary})
+					table.insert(ir, {kind = "newline"})
+				end
+				table.insert(ir, {kind = "newline"})
+			end
+		end
+	end
+
+	return ir
+end
+
+-- =============================================================================
+-- CSMonitor Text Edition Article Parser
+-- =============================================================================
+
+local function parseCSMonitorArticle(dom)
+	local ir = {}
+
+	-- Find title (h1)
+	local titleNode = findByTag(dom, "h1")
+	if titleNode then
+		local title = cleanText(extractText(titleNode))
+		if title then
+			table.insert(ir, {kind = "plain", text = title})
+			table.insert(ir, {kind = "newline"})
+			table.insert(ir, {kind = "newline"})
+		end
+	end
+
+	-- Find byline/date - usually in elements near the top
+	-- Look for time element or strong with "By"
+	local timeNode = findByTag(dom, "time")
+	if timeNode then
+		local dateText = cleanText(extractText(timeNode))
+		if dateText then
+			table.insert(ir, {kind = "plain", text = dateText})
+			table.insert(ir, {kind = "newline"})
+		end
+	end
+
+	-- Find paragraphs
+	local paragraphs = findAllByTag(dom, "p")
+	local foundContent = false
+
+	for _, p in ipairs(paragraphs) do
+		local text = cleanText(extractText(p))
+		if text and #text > 0 then
+			-- Skip very short paragraphs at the start (likely meta)
+			if not foundContent and #text < 50 then
+				table.insert(ir, {kind = "plain", text = text})
+				table.insert(ir, {kind = "newline"})
+			else
+				foundContent = true
+				table.insert(ir, {kind = "plain", text = text})
+				table.insert(ir, {kind = "newline"})
+				table.insert(ir, {kind = "newline"})
+			end
+		end
+	end
+
+	return ir
+end
+
+-- =============================================================================
 -- Parser Registry
 -- =============================================================================
 
@@ -252,6 +450,26 @@ siteparsers.parsers = {
 		name = "NPR Article",
 		pattern = "^https?://text%.npr%.org/.*",
 		parse = parseNPRArticle
+	},
+	{
+		name = "CBC Lite Frontpage",
+		pattern = "^https?://www%.cbc%.ca/lite/?$",
+		parse = parseCBCFrontpage
+	},
+	{
+		name = "CBC Lite Article",
+		pattern = "^https?://www%.cbc%.ca/lite/story/.*",
+		parse = parseCBCArticle
+	},
+	{
+		name = "CSMonitor Frontpage",
+		pattern = "^https?://www%.csmonitor%.com/text_edition/?$",
+		parse = parseCSMonitorFrontpage
+	},
+	{
+		name = "CSMonitor Article",
+		pattern = "^https?://www%.csmonitor%.com/text_edition/.*",
+		parse = parseCSMonitorArticle
 	}
 }
 

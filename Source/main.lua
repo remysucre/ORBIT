@@ -541,7 +541,7 @@ end
 
 function playdate.update()
 	if not nav.initialPageLoaded then
-		fetchPage("https://text.npr.org")
+		fetchPage("https://www.csmonitor.com/text_edition")
 		nav.initialPageLoaded = true
 	end
 
