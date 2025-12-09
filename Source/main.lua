@@ -8,7 +8,7 @@ local gfx = playdate.graphics
 local geo = playdate.geometry
 local net = playdate.network
 
-local fnt = gfx.font.new("fonts/cuniform-heavy")
+local fnt = gfx.font.new("fonts/cuniform")
 gfx.setFont(fnt)
 
 local directory = "https://orbit.casa/directory.md"
@@ -174,7 +174,7 @@ end
 local page = initializePage()
 
 -- Initialize C renderer (font cache only)
-cmark.initRenderer("fonts/cuniform-heavy")
+cmark.initRenderer("fonts/cuniform")
 
 -- Links array (populated by render())
 local links = {}

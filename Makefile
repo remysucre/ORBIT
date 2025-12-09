@@ -230,7 +230,7 @@ ULIBS =
 
 # Copy font files from submodule
 fonts:
-	cp cuniform/*.fnt Source/fonts/
+	cp cuniform/*.fnt cuniform/*-table-*.png Source/fonts/
 
 include $(SDK)/C_API/buildsupport/common.mk
 
