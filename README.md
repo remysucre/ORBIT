@@ -10,15 +10,15 @@ Connect your playdate to a computer with USB and follow [instructions](https://h
 
 ## Contributing
 
-There are many ways to contribute to ORBIT, including [writing your own web page](#writing-web-pages-for-orbit), adding a [site parser](#adding-site-parsers) for an HTML page, or even [drawing missing fonts](#drawing-missing-fonts).
+There are many ways to contribute to ORBIT, including [writing your own web page](#writing-web-pages-for-orbit), adding a [site renderer](#adding-site-renderers) for an HTML page, or even [drawing missing fonts](#drawing-missing-fonts).
 
 ### Writing web pages for ORBIT
 
 ORBIT currently supports two formats, markdown and HTML. If you are writing your own page from scratch, you should do it in markdown. ORBIT uses the cmark library from the Commonmark project to parse markdowns, so you can refer to commonmark.org for the syntax. Currently we only render plain text and links, and PRs are welcome to support other elements.
 
-### Adding site parsers
+### Adding site renderers
 
-Because of limitations of the Playdate console, ORBIT cannot (and never will) support arbitrary websites. Instead, we implement a novel "exo browser" architecture: there is a curated set of custom rules that parse a selected set of websites, and you can contribute by writing more rules. While there is plan to support images in the future, ORBIT focuses on plain text content like news articles and (non-technical) blogs. You can see some example site parsers [here](https://github.com/remysucre/ORBIT/blob/main/Source/siteparsers.lua).
+Because of limitations of the Playdate console, ORBIT cannot (and never will) support arbitrary websites. Instead, we implement a novel "exo browser" architecture: there is a curated set of custom code that render a selected set of websites, and you can contribute by writing more renderers. While there is plan to support images in the future, ORBIT focuses on plain text content like news articles and (non-technical) blogs. You can see some example site renderers [here](https://github.com/remysucre/ORBIT/blob/main/src/main.c).
 
 ### Drawing missing fonts
 
