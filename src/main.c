@@ -651,7 +651,7 @@ static int layoutWords(const char* text, int startX, int startY,
     int h = fontCache.fontHeight;
 
     // Get space width (without tracking - we add tracking manually)
-    int spaceWidth = pd->graphics->getTextWidth(fontCache.font, " ", 1, kASCIIEncoding, 0);
+    int spaceWidth = pd->graphics->getTextWidth(fontCache.font, " ", 1, kUTF8Encoding, 0);
 
     int pos = 0;
     int len = (int)strlen(text);
@@ -686,7 +686,7 @@ static int layoutWords(const char* text, int startX, int startY,
             word[wordLen] = '\0';
 
             // Get word width without tracking, then add tracking manually
-            int wordWidth = pd->graphics->getTextWidth(fontCache.font, word, wordLen, kASCIIEncoding, 0);
+            int wordWidth = pd->graphics->getTextWidth(fontCache.font, word, wordLen, kUTF8Encoding, 0);
 
             // Wrap if needed
             if (x > 0 && x + wordWidth > contentWidth) {
@@ -697,7 +697,7 @@ static int layoutWords(const char* text, int startX, int startY,
                     segments[segmentCount].x = segX;
                     segments[segmentCount].y = segY;
                     segments[segmentCount].width = pd->graphics->getTextWidth(
-                        fontCache.font, segment, segLen, kASCIIEncoding, 0);
+                        fontCache.font, segment, segLen, kUTF8Encoding, 0);
                     segmentCount++;
                 }
 
@@ -727,7 +727,7 @@ static int layoutWords(const char* text, int startX, int startY,
         segments[segmentCount].x = segX;
         segments[segmentCount].y = segY;
         segments[segmentCount].width = pd->graphics->getTextWidth(
-            fontCache.font, segment, segLen, kASCIIEncoding, 0);
+            fontCache.font, segment, segLen, kUTF8Encoding, 0);
         segmentCount++;
     }
 
@@ -926,7 +926,7 @@ static int renderPage(lua_State* L) {
 
     for (int i = 0; i < totalSegments; i++) {
         pd->graphics->drawText(allSegments[i].text, strlen(allSegments[i].text),
-                               kASCIIEncoding,
+                               kUTF8Encoding,
                                pagePadding + allSegments[i].x,
                                pagePadding + allSegments[i].y);
     }
@@ -1148,7 +1148,7 @@ static int renderHTML(lua_State* L) {
 
     for (int i = 0; i < ctx.segmentCount; i++) {
         pd->graphics->drawText(allSegments[i].text, strlen(allSegments[i].text),
-                               kASCIIEncoding,
+                               kUTF8Encoding,
                                pagePadding + allSegments[i].x,
                                pagePadding + allSegments[i].y);
     }
