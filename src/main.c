@@ -11,6 +11,7 @@
 #include "cmark.h"
 #include "lexbor/html/html.h"
 #include "lexbor/dom/interfaces/character_data.h"
+#include "lexbor/core/str.h"
 #include "lexbor/css/css.h"
 #include "lexbor/selectors/selectors.h"
 
@@ -77,116 +78,23 @@ static void jsonWrite(void* userdata, const char* str, int len) {
 // HTML Text Extraction and Cleaning
 // ============================================================================
 
-// Extract all text content from a DOM node recursively
-static void extractText(lxb_dom_node_t* node, char* buffer, int maxLen, int* pos) {
-    while (node != NULL) {
-        if (node->type == LXB_DOM_NODE_TYPE_TEXT) {
-            lxb_dom_character_data_t* char_data = lxb_dom_interface_character_data(node);
-            const lxb_char_t* text = char_data->data.data;
-            size_t len = char_data->data.length;
+// Extract and clean text from a DOM node using lexbor's built-in functions
+static void getNodeText(lxb_dom_node_t* node, char* buffer, size_t maxLen) {
+    buffer[0] = '\0';
+    if (!node) return;
 
-            for (size_t i = 0; i < len && *pos < maxLen - 1; i++) {
-                buffer[(*pos)++] = (char)text[i];
-            }
-        }
+    size_t len;
+    lxb_char_t* text = lxb_dom_node_text_content(node, &len);
+    if (!text || len == 0) return;
 
-        if (node->first_child) {
-            extractText(node->first_child, buffer, maxLen, pos);
-        }
+    // Clean in-place using lexbor's whitespace collapsing
+    lexbor_str_t str = {.data = text, .length = len};
+    lexbor_str_strip_collapse_whitespace(&str);
 
-        node = node->next;
-    }
-    buffer[*pos] = '\0';
-}
-
-// Clean text: collapse whitespace, decode entities, trim
-static void cleanText(char* text) {
-    if (!text || !*text) return;
-
-    char* src = text;
-    char* dst = text;
-    int lastWasSpace = 1;  // Treat start as space to trim leading
-
-    while (*src) {
-        char c = *src++;
-
-        // Convert whitespace to space
-        if (c == '\r' || c == '\n' || c == '\t') {
-            c = ' ';
-        }
-
-        // Collapse multiple spaces
-        if (c == ' ') {
-            if (!lastWasSpace) {
-                *dst++ = ' ';
-                lastWasSpace = 1;
-            }
-        } else {
-            *dst++ = c;
-            lastWasSpace = 0;
-        }
-    }
-
-    // Trim trailing space
-    if (dst > text && *(dst - 1) == ' ') {
-        dst--;
-    }
-    *dst = '\0';
-
-    // Decode common HTML entities in-place
-    src = text;
-    dst = text;
-    while (*src) {
-        if (*src == '&') {
-            if (strncmp(src, "&amp;", 5) == 0) {
-                *dst++ = '&';
-                src += 5;
-            } else if (strncmp(src, "&lt;", 4) == 0) {
-                *dst++ = '<';
-                src += 4;
-            } else if (strncmp(src, "&gt;", 4) == 0) {
-                *dst++ = '>';
-                src += 4;
-            } else if (strncmp(src, "&quot;", 6) == 0) {
-                *dst++ = '"';
-                src += 6;
-            } else if (strncmp(src, "&apos;", 6) == 0) {
-                *dst++ = '\'';
-                src += 6;
-            } else if (strncmp(src, "&#39;", 5) == 0) {
-                *dst++ = '\'';
-                src += 5;
-            } else if (strncmp(src, "&nbsp;", 6) == 0) {
-                *dst++ = ' ';
-                src += 6;
-            } else if (strncmp(src, "&#x", 3) == 0) {
-                // Hex numeric entity
-                char* end;
-                unsigned long val = strtoul(src + 3, &end, 16);
-                if (*end == ';' && val < 128) {
-                    *dst++ = (char)val;
-                    src = end + 1;
-                } else {
-                    *dst++ = *src++;
-                }
-            } else if (strncmp(src, "&#", 2) == 0) {
-                // Decimal numeric entity
-                char* end;
-                unsigned long val = strtoul(src + 2, &end, 10);
-                if (*end == ';' && val < 128) {
-                    *dst++ = (char)val;
-                    src = end + 1;
-                } else {
-                    *dst++ = *src++;
-                }
-            } else {
-                *dst++ = *src++;
-            }
-        } else {
-            *dst++ = *src++;
-        }
-    }
-    *dst = '\0';
+    // Copy to output buffer
+    size_t copyLen = str.length < maxLen - 1 ? str.length : maxLen - 1;
+    memcpy(buffer, str.data, copyLen);
+    buffer[copyLen] = '\0';
 }
 
 // ============================================================================
@@ -312,9 +220,7 @@ static void renderNPRFrontpage(RenderContext* ctx, lxb_html_document_t* document
 
             // Extract link text
             char text[512];
-            int pos = 0;
-            extractText(lxb_dom_interface_node(element)->first_child, text, sizeof(text), &pos);
-            cleanText(text);
+            getNodeText(lxb_dom_interface_node(element), text, sizeof(text));
 
             if (text[0]) {
                 // Build full URL
@@ -377,9 +283,7 @@ static void renderNPRArticle(RenderContext* ctx, lxb_html_document_t* document) 
             continue;
         }
         char text[512];
-        int pos = 0;
-        extractText(lxb_dom_interface_node(h1)->first_child, text, sizeof(text), &pos);
-        cleanText(text);
+        getNodeText(lxb_dom_interface_node(h1), text, sizeof(text));
         if (text[0]) {
             renderPlainText(ctx, text);
             renderNewline(ctx);
@@ -412,9 +316,7 @@ static void renderNPRArticle(RenderContext* ctx, lxb_html_document_t* document) 
         }
 
         char text[2048];
-        int pos = 0;
-        extractText(lxb_dom_interface_node(p)->first_child, text, sizeof(text), &pos);
-        cleanText(text);
+        getNodeText(lxb_dom_interface_node(p), text, sizeof(text));
 
         if (text[0]) {
             renderPlainText(ctx, text);
@@ -478,10 +380,8 @@ static void renderCSMonitorFrontpage(RenderContext* ctx, lxb_html_document_t* do
                         childElem, (const lxb_char_t*)"data-field", 10, &attrLen);
 
                     if (dataField) {
-                        int pos = 0;
                         char text[512];
-                        extractText(child->first_child, text, sizeof(text), &pos);
-                        cleanText(text);
+                        getNodeText(child, text, sizeof(text));
 
                         if (strncmp((const char*)dataField, "title", 5) == 0) {
                             strncpy(headline, text, sizeof(headline) - 1);
@@ -523,9 +423,7 @@ static void renderCSMonitorArticle(RenderContext* ctx, lxb_html_document_t* docu
     if (lxb_dom_collection_length(collection) > 0) {
         lxb_dom_element_t* h1 = lxb_dom_collection_element(collection, 0);
         char text[512];
-        int pos = 0;
-        extractText(lxb_dom_interface_node(h1)->first_child, text, sizeof(text), &pos);
-        cleanText(text);
+        getNodeText(lxb_dom_interface_node(h1), text, sizeof(text));
         if (text[0]) {
             renderPlainText(ctx, text);
             renderNewline(ctx);
@@ -543,9 +441,7 @@ static void renderCSMonitorArticle(RenderContext* ctx, lxb_html_document_t* docu
     if (lxb_dom_collection_length(collection) > 0) {
         lxb_dom_element_t* timeElem = lxb_dom_collection_element(collection, 0);
         char text[256];
-        int pos = 0;
-        extractText(lxb_dom_interface_node(timeElem)->first_child, text, sizeof(text), &pos);
-        cleanText(text);
+        getNodeText(lxb_dom_interface_node(timeElem), text, sizeof(text));
         if (text[0]) {
             renderPlainText(ctx, text);
             renderNewline(ctx);
@@ -563,9 +459,7 @@ static void renderCSMonitorArticle(RenderContext* ctx, lxb_html_document_t* docu
     for (size_t i = 0; i < lxb_dom_collection_length(collection); i++) {
         lxb_dom_element_t* p = lxb_dom_collection_element(collection, i);
         char text[2048];
-        int pos = 0;
-        extractText(lxb_dom_interface_node(p)->first_child, text, sizeof(text), &pos);
-        cleanText(text);
+        getNodeText(lxb_dom_interface_node(p), text, sizeof(text));
 
         if (text[0]) {
             renderPlainText(ctx, text);
