@@ -11,6 +11,8 @@
 #include "cmark.h"
 #include "lexbor/html/html.h"
 #include "lexbor/dom/interfaces/character_data.h"
+#include "lexbor/css/css.h"
+#include "lexbor/selectors/selectors.h"
 
 static PlaydateAPI* pd = NULL;
 
@@ -33,6 +35,31 @@ static struct {
     int fontHeight;
 } fontCache = {0};
 
+// ============================================================================
+// HTML Rendering Context
+// ============================================================================
+
+#define MAX_LINKS_JSON 16384
+#define MAX_SEGMENTS_PER_LINK 8
+
+typedef struct {
+    // Layout state
+    int x, y;
+    int contentWidth;
+    int tracking;
+    int firstParagraph;
+
+    // Text segments for final drawing
+    TextSegment* segments;
+    int segmentCount;
+    int maxSegments;
+
+    // Link tracking
+    json_encoder* linkEncoder;
+    TextSegment linkSegments[MAX_SEGMENTS_PER_LINK];
+    int linkSegmentCount;
+} RenderContext;
+
 // JSON encoder buffer
 static char* jsonBuffer;
 static int jsonBufferPos;
@@ -44,6 +71,538 @@ static void jsonWrite(void* userdata, const char* str, int len) {
         memcpy(jsonBuffer + jsonBufferPos, str, len);
         jsonBufferPos += len;
     }
+}
+
+// ============================================================================
+// HTML Text Extraction and Cleaning
+// ============================================================================
+
+// Extract all text content from a DOM node recursively
+static void extractText(lxb_dom_node_t* node, char* buffer, int maxLen, int* pos) {
+    while (node != NULL) {
+        if (node->type == LXB_DOM_NODE_TYPE_TEXT) {
+            lxb_dom_character_data_t* char_data = lxb_dom_interface_character_data(node);
+            const lxb_char_t* text = char_data->data.data;
+            size_t len = char_data->data.length;
+
+            for (size_t i = 0; i < len && *pos < maxLen - 1; i++) {
+                buffer[(*pos)++] = (char)text[i];
+            }
+        }
+
+        if (node->first_child) {
+            extractText(node->first_child, buffer, maxLen, pos);
+        }
+
+        node = node->next;
+    }
+    buffer[*pos] = '\0';
+}
+
+// Clean text: collapse whitespace, decode entities, trim
+static void cleanText(char* text) {
+    if (!text || !*text) return;
+
+    char* src = text;
+    char* dst = text;
+    int lastWasSpace = 1;  // Treat start as space to trim leading
+
+    while (*src) {
+        char c = *src++;
+
+        // Convert whitespace to space
+        if (c == '\r' || c == '\n' || c == '\t') {
+            c = ' ';
+        }
+
+        // Collapse multiple spaces
+        if (c == ' ') {
+            if (!lastWasSpace) {
+                *dst++ = ' ';
+                lastWasSpace = 1;
+            }
+        } else {
+            *dst++ = c;
+            lastWasSpace = 0;
+        }
+    }
+
+    // Trim trailing space
+    if (dst > text && *(dst - 1) == ' ') {
+        dst--;
+    }
+    *dst = '\0';
+
+    // Decode common HTML entities in-place
+    src = text;
+    dst = text;
+    while (*src) {
+        if (*src == '&') {
+            if (strncmp(src, "&amp;", 5) == 0) {
+                *dst++ = '&';
+                src += 5;
+            } else if (strncmp(src, "&lt;", 4) == 0) {
+                *dst++ = '<';
+                src += 4;
+            } else if (strncmp(src, "&gt;", 4) == 0) {
+                *dst++ = '>';
+                src += 4;
+            } else if (strncmp(src, "&quot;", 6) == 0) {
+                *dst++ = '"';
+                src += 6;
+            } else if (strncmp(src, "&apos;", 6) == 0) {
+                *dst++ = '\'';
+                src += 6;
+            } else if (strncmp(src, "&#39;", 5) == 0) {
+                *dst++ = '\'';
+                src += 5;
+            } else if (strncmp(src, "&nbsp;", 6) == 0) {
+                *dst++ = ' ';
+                src += 6;
+            } else if (strncmp(src, "&#x", 3) == 0) {
+                // Hex numeric entity
+                char* end;
+                unsigned long val = strtoul(src + 3, &end, 16);
+                if (*end == ';' && val < 128) {
+                    *dst++ = (char)val;
+                    src = end + 1;
+                } else {
+                    *dst++ = *src++;
+                }
+            } else if (strncmp(src, "&#", 2) == 0) {
+                // Decimal numeric entity
+                char* end;
+                unsigned long val = strtoul(src + 2, &end, 10);
+                if (*end == ';' && val < 128) {
+                    *dst++ = (char)val;
+                    src = end + 1;
+                } else {
+                    *dst++ = *src++;
+                }
+            } else {
+                *dst++ = *src++;
+            }
+        } else {
+            *dst++ = *src++;
+        }
+    }
+    *dst = '\0';
+}
+
+// ============================================================================
+// HTML Rendering Primitives
+// ============================================================================
+
+// Forward declaration of layoutWords (defined later)
+static int layoutWords(const char* text, int startX, int startY,
+                       TextSegment* segments, int maxSegments,
+                       int* endX, int* endY,
+                       int contentWidth, int tracking);
+
+// Render plain text to the context
+static void renderPlainText(RenderContext* ctx, const char* text) {
+    if (!text || !*text || !ctx->segments) return;
+
+    static TextSegment tempSegments[256];
+    int newX, newY;
+    int count = layoutWords(text, ctx->x, ctx->y, tempSegments, 256,
+                            &newX, &newY, ctx->contentWidth, ctx->tracking);
+
+    // Add segments to total list
+    for (int i = 0; i < count && ctx->segmentCount < ctx->maxSegments; i++) {
+        ctx->segments[ctx->segmentCount++] = tempSegments[i];
+    }
+
+    ctx->x = newX;
+    ctx->y = newY;
+}
+
+// Render a link (text + record segments for JSON)
+static void renderLink(RenderContext* ctx, const char* text, const char* url) {
+    if (!text || !*text || !ctx->linkEncoder) return;
+
+    // Render text normally
+    static TextSegment tempSegments[256];
+    int newX, newY;
+    int count = layoutWords(text, ctx->x, ctx->y, tempSegments, 256,
+                            &newX, &newY, ctx->contentWidth, ctx->tracking);
+
+    // Add segments to total list and link segments
+    ctx->linkSegmentCount = 0;
+    for (int i = 0; i < count && ctx->segmentCount < ctx->maxSegments; i++) {
+        ctx->segments[ctx->segmentCount++] = tempSegments[i];
+        if (ctx->linkSegmentCount < MAX_SEGMENTS_PER_LINK) {
+            ctx->linkSegments[ctx->linkSegmentCount++] = tempSegments[i];
+        }
+    }
+
+    ctx->x = newX;
+    ctx->y = newY;
+
+    // Record link to JSON
+    if (ctx->linkSegmentCount > 0) {
+        json_encoder* enc = ctx->linkEncoder;
+        enc->addArrayMember(enc);
+        enc->startTable(enc);
+
+        // URL
+        enc->addTableMember(enc, "url", 3);
+        enc->writeString(enc, url ? url : "", url ? (int)strlen(url) : 0);
+
+        // Segments array
+        enc->addTableMember(enc, "segments", 8);
+        enc->startArray(enc);
+        for (int i = 0; i < ctx->linkSegmentCount; i++) {
+            TextSegment* seg = &ctx->linkSegments[i];
+            enc->addArrayMember(enc);
+            enc->startArray(enc);
+            enc->addArrayMember(enc);
+            enc->writeInt(enc, seg->x);
+            enc->addArrayMember(enc);
+            enc->writeInt(enc, seg->y);
+            enc->addArrayMember(enc);
+            enc->writeInt(enc, seg->width);
+            enc->endArray(enc);
+        }
+        enc->endArray(enc);
+
+        enc->endTable(enc);
+    }
+}
+
+// Render a newline (paragraph break)
+static void renderNewline(RenderContext* ctx) {
+    ctx->x = 0;
+    ctx->y += fontCache.fontHeight;
+}
+
+// ============================================================================
+// Site-Specific HTML Renderers
+// ============================================================================
+
+// NPR Frontpage: Render list of article links
+static void renderNPRFrontpage(RenderContext* ctx, lxb_html_document_t* document) {
+    // Title
+    renderPlainText(ctx, "NPR News");
+    renderNewline(ctx);
+    renderNewline(ctx);
+
+    // Find all <a> tags and filter for article links
+    lxb_dom_collection_t* collection = lxb_dom_collection_make(
+        &document->dom_document, 128);
+
+    lxb_dom_elements_by_tag_name(
+        lxb_dom_interface_element(document->body),
+        collection,
+        (const lxb_char_t*)"a", 1);
+
+    for (size_t i = 0; i < lxb_dom_collection_length(collection); i++) {
+        lxb_dom_element_t* element = lxb_dom_collection_element(collection, i);
+
+        // Get href attribute
+        size_t hrefLen;
+        const lxb_char_t* href = lxb_dom_element_get_attribute(
+            element, (const lxb_char_t*)"href", 4, &hrefLen);
+
+        if (!href || hrefLen == 0) continue;
+
+        // Filter: only links starting with /g, /n, or /nx (article links)
+        if (href[0] == '/' && (href[1] == 'g' || href[1] == 'n' ||
+            (hrefLen > 2 && href[1] == 'n' && href[2] == 'x'))) {
+
+            // Extract link text
+            char text[512];
+            int pos = 0;
+            extractText(lxb_dom_interface_node(element)->first_child, text, sizeof(text), &pos);
+            cleanText(text);
+
+            if (text[0]) {
+                // Build full URL
+                char fullUrl[256];
+                snprintf(fullUrl, sizeof(fullUrl), "https://text.npr.org%.*s", (int)hrefLen, href);
+
+                renderLink(ctx, text, fullUrl);
+                renderNewline(ctx);
+                renderNewline(ctx);
+            }
+        }
+    }
+
+    lxb_dom_collection_destroy(collection, 1);
+}
+
+// Check if element is inside a tag with given name
+static int isInsideTag(lxb_dom_node_t* node, const char* tagName, size_t tagLen) {
+    lxb_dom_node_t* parent = node->parent;
+    while (parent) {
+        if (parent->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+            lxb_dom_element_t* elem = lxb_dom_interface_element(parent);
+            size_t len;
+            const lxb_char_t* name = lxb_dom_element_qualified_name(elem, &len);
+            if (name && len == tagLen && strncasecmp((const char*)name, tagName, tagLen) == 0) {
+                return 1;
+            }
+        }
+        parent = parent->parent;
+    }
+    return 0;
+}
+
+// Check if element has a class attribute containing the given class name
+static int hasClass(lxb_dom_element_t* element, const char* className) {
+    size_t len;
+    const lxb_char_t* classAttr = lxb_dom_element_get_attribute(
+        element, (const lxb_char_t*)"class", 5, &len);
+    if (classAttr && strstr((const char*)classAttr, className)) {
+        return 1;
+    }
+    return 0;
+}
+
+// NPR Article: Render article content
+static void renderNPRArticle(RenderContext* ctx, lxb_html_document_t* document) {
+    lxb_dom_collection_t* collection = lxb_dom_collection_make(
+        &document->dom_document, 64);
+
+    // Find title (h1) - skip if inside <header>
+    lxb_dom_elements_by_tag_name(
+        lxb_dom_interface_element(document->body),
+        collection,
+        (const lxb_char_t*)"h1", 2);
+
+    for (size_t i = 0; i < lxb_dom_collection_length(collection); i++) {
+        lxb_dom_element_t* h1 = lxb_dom_collection_element(collection, i);
+        // Skip h1 inside <header>
+        if (isInsideTag(lxb_dom_interface_node(h1), "header", 6)) {
+            continue;
+        }
+        char text[512];
+        int pos = 0;
+        extractText(lxb_dom_interface_node(h1)->first_child, text, sizeof(text), &pos);
+        cleanText(text);
+        if (text[0]) {
+            renderPlainText(ctx, text);
+            renderNewline(ctx);
+            renderNewline(ctx);
+            break;  // Only render first non-header h1
+        }
+    }
+    lxb_dom_collection_clean(collection);
+
+    // Find paragraphs
+    lxb_dom_elements_by_tag_name(
+        lxb_dom_interface_element(document->body),
+        collection,
+        (const lxb_char_t*)"p", 1);
+
+    for (size_t i = 0; i < lxb_dom_collection_length(collection); i++) {
+        lxb_dom_element_t* p = lxb_dom_collection_element(collection, i);
+
+        // Skip paragraphs inside <header>, <nav>, or <footer>
+        lxb_dom_node_t* pNode = lxb_dom_interface_node(p);
+        if (isInsideTag(pNode, "header", 6) ||
+            isInsideTag(pNode, "nav", 3) ||
+            isInsideTag(pNode, "footer", 6)) {
+            continue;
+        }
+
+        // Skip paragraphs with class="slug-line"
+        if (hasClass(p, "slug-line")) {
+            continue;
+        }
+
+        char text[2048];
+        int pos = 0;
+        extractText(lxb_dom_interface_node(p)->first_child, text, sizeof(text), &pos);
+        cleanText(text);
+
+        if (text[0]) {
+            renderPlainText(ctx, text);
+            renderNewline(ctx);
+            renderNewline(ctx);
+        }
+    }
+
+    lxb_dom_collection_destroy(collection, 1);
+}
+
+// CSMonitor Frontpage: Render list of article links
+static void renderCSMonitorFrontpage(RenderContext* ctx, lxb_html_document_t* document) {
+    // Title
+    renderPlainText(ctx, "Christian Science Monitor");
+    renderNewline(ctx);
+    renderNewline(ctx);
+
+    // Find all <a> tags
+    lxb_dom_collection_t* collection = lxb_dom_collection_make(
+        &document->dom_document, 128);
+
+    lxb_dom_elements_by_tag_name(
+        lxb_dom_interface_element(document->body),
+        collection,
+        (const lxb_char_t*)"a", 1);
+
+    for (size_t i = 0; i < lxb_dom_collection_length(collection); i++) {
+        lxb_dom_element_t* element = lxb_dom_collection_element(collection, i);
+
+        // Get href attribute
+        size_t hrefLen;
+        const lxb_char_t* href = lxb_dom_element_get_attribute(
+            element, (const lxb_char_t*)"href", 4, &hrefLen);
+
+        if (!href || hrefLen == 0) continue;
+
+        // Filter: only links containing /text_edition/ and /20 (year pattern)
+        if (strstr((const char*)href, "/text_edition/") &&
+            strstr((const char*)href, "/20")) {
+
+            // Build full URL
+            char fullUrl[512];
+            if (href[0] == '/') {
+                snprintf(fullUrl, sizeof(fullUrl), "https://www.csmonitor.com%.*s", (int)hrefLen, href);
+            } else {
+                snprintf(fullUrl, sizeof(fullUrl), "%.*s", (int)hrefLen, href);
+            }
+
+            // Look for title element with data-field="title"
+            char headline[512] = "";
+            char summary[512] = "";
+
+            // Search children for data-field attributes
+            lxb_dom_node_t* child = lxb_dom_interface_node(element)->first_child;
+            while (child) {
+                if (child->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+                    lxb_dom_element_t* childElem = lxb_dom_interface_element(child);
+                    size_t attrLen;
+                    const lxb_char_t* dataField = lxb_dom_element_get_attribute(
+                        childElem, (const lxb_char_t*)"data-field", 10, &attrLen);
+
+                    if (dataField) {
+                        int pos = 0;
+                        char text[512];
+                        extractText(child->first_child, text, sizeof(text), &pos);
+                        cleanText(text);
+
+                        if (strncmp((const char*)dataField, "title", 5) == 0) {
+                            strncpy(headline, text, sizeof(headline) - 1);
+                        } else if (strncmp((const char*)dataField, "summary", 7) == 0) {
+                            strncpy(summary, text, sizeof(summary) - 1);
+                        }
+                    }
+                }
+                child = child->next;
+            }
+
+            // Render if headline found
+            if (headline[0]) {
+                renderLink(ctx, headline, fullUrl);
+                renderNewline(ctx);
+                if (summary[0]) {
+                    renderPlainText(ctx, summary);
+                    renderNewline(ctx);
+                }
+                renderNewline(ctx);
+            }
+        }
+    }
+
+    lxb_dom_collection_destroy(collection, 1);
+}
+
+// CSMonitor Article: Render article content
+static void renderCSMonitorArticle(RenderContext* ctx, lxb_html_document_t* document) {
+    lxb_dom_collection_t* collection = lxb_dom_collection_make(
+        &document->dom_document, 64);
+
+    // Find title (h1)
+    lxb_dom_elements_by_tag_name(
+        lxb_dom_interface_element(document->body),
+        collection,
+        (const lxb_char_t*)"h1", 2);
+
+    if (lxb_dom_collection_length(collection) > 0) {
+        lxb_dom_element_t* h1 = lxb_dom_collection_element(collection, 0);
+        char text[512];
+        int pos = 0;
+        extractText(lxb_dom_interface_node(h1)->first_child, text, sizeof(text), &pos);
+        cleanText(text);
+        if (text[0]) {
+            renderPlainText(ctx, text);
+            renderNewline(ctx);
+            renderNewline(ctx);
+        }
+    }
+    lxb_dom_collection_clean(collection);
+
+    // Find time element for date
+    lxb_dom_elements_by_tag_name(
+        lxb_dom_interface_element(document->body),
+        collection,
+        (const lxb_char_t*)"time", 4);
+
+    if (lxb_dom_collection_length(collection) > 0) {
+        lxb_dom_element_t* timeElem = lxb_dom_collection_element(collection, 0);
+        char text[256];
+        int pos = 0;
+        extractText(lxb_dom_interface_node(timeElem)->first_child, text, sizeof(text), &pos);
+        cleanText(text);
+        if (text[0]) {
+            renderPlainText(ctx, text);
+            renderNewline(ctx);
+            renderNewline(ctx);
+        }
+    }
+    lxb_dom_collection_clean(collection);
+
+    // Find paragraphs
+    lxb_dom_elements_by_tag_name(
+        lxb_dom_interface_element(document->body),
+        collection,
+        (const lxb_char_t*)"p", 1);
+
+    for (size_t i = 0; i < lxb_dom_collection_length(collection); i++) {
+        lxb_dom_element_t* p = lxb_dom_collection_element(collection, i);
+        char text[2048];
+        int pos = 0;
+        extractText(lxb_dom_interface_node(p)->first_child, text, sizeof(text), &pos);
+        cleanText(text);
+
+        if (text[0]) {
+            renderPlainText(ctx, text);
+            renderNewline(ctx);
+            renderNewline(ctx);
+        }
+    }
+
+    lxb_dom_collection_destroy(collection, 1);
+}
+
+// Site renderer function pointer type
+typedef void (*SiteRenderer)(RenderContext*, lxb_html_document_t*);
+
+// Find appropriate renderer for URL
+static SiteRenderer findRenderer(const char* url) {
+    if (!url) return NULL;
+
+    // NPR
+    if (strcmp(url, "https://text.npr.org/") == 0 ||
+        strcmp(url, "https://text.npr.org") == 0) {
+        return renderNPRFrontpage;
+    }
+    if (strstr(url, "text.npr.org/") != NULL) {
+        return renderNPRArticle;
+    }
+
+    // CSMonitor
+    if (strcmp(url, "https://www.csmonitor.com/text_edition/") == 0 ||
+        strcmp(url, "https://www.csmonitor.com/text_edition") == 0) {
+        return renderCSMonitorFrontpage;
+    }
+    if (strstr(url, "csmonitor.com/text_edition/") != NULL) {
+        return renderCSMonitorArticle;
+    }
+
+    return NULL;
 }
 
 // ============================================================================
@@ -473,7 +1032,138 @@ static void serializeNode(lxb_dom_node_t *node, json_encoder* enc, int* first) {
     }
 }
 
-// Parse HTML and return JSON DOM tree
+// Render HTML page using site-specific renderer
+// Args: htmlString, url, pageWidth, pagePadding, tracking
+// Returns: pageImage, pageHeight, linksJSON
+static int renderHTML(lua_State* L) {
+    (void)L;
+
+    if (!fontCache.font) {
+        pd->system->logToConsole("renderHTML: font not loaded");
+        pd->lua->pushNil();
+        pd->lua->pushInt(SCREEN_HEIGHT);
+        pd->lua->pushString("[]");
+        return 3;
+    }
+
+    const char* html = pd->lua->getArgString(1);
+    const char* url = pd->lua->getArgString(2);
+    int pageWidth = pd->lua->getArgInt(3);
+    int pagePadding = pd->lua->getArgInt(4);
+    int tracking = pd->lua->getArgInt(5);
+
+    if (!html || !url) {
+        pd->system->logToConsole("renderHTML: missing arguments");
+        pd->lua->pushNil();
+        pd->lua->pushInt(SCREEN_HEIGHT);
+        pd->lua->pushString("[]");
+        return 3;
+    }
+
+    // Find site-specific renderer
+    SiteRenderer renderer = findRenderer(url);
+    if (!renderer) {
+        pd->system->logToConsole("renderHTML: no renderer for URL: %s", url);
+        pd->lua->pushNil();
+        pd->lua->pushInt(SCREEN_HEIGHT);
+        pd->lua->pushString("[]");
+        return 3;
+    }
+
+    // Parse HTML
+    lxb_html_document_t* document = lxb_html_document_create();
+    if (!document) {
+        pd->system->logToConsole("renderHTML: failed to create document");
+        pd->lua->pushNil();
+        pd->lua->pushInt(SCREEN_HEIGHT);
+        pd->lua->pushString("[]");
+        return 3;
+    }
+
+    lxb_status_t status = lxb_html_document_parse(document,
+        (const lxb_char_t*)html, strlen(html));
+
+    if (status != LXB_STATUS_OK || !document->body) {
+        pd->system->logToConsole("renderHTML: failed to parse HTML");
+        lxb_html_document_destroy(document);
+        pd->lua->pushNil();
+        pd->lua->pushInt(SCREEN_HEIGHT);
+        pd->lua->pushString("[]");
+        return 3;
+    }
+
+    // Initialize render context
+    static TextSegment allSegments[MAX_TEXT_SEGMENTS];
+    static char linksJson[MAX_LINKS_JSON];
+
+    jsonBuffer = linksJson;
+    jsonBufferPos = 0;
+    jsonBufferSize = MAX_LINKS_JSON;
+
+    json_encoder encoder;
+    pd->json->initEncoder(&encoder, jsonWrite, NULL, 0);
+    encoder.startArray(&encoder);
+
+    RenderContext ctx = {
+        .x = 0,
+        .y = 0,
+        .contentWidth = pageWidth - 2 * pagePadding,
+        .tracking = tracking,
+        .firstParagraph = 1,
+        .segments = allSegments,
+        .segmentCount = 0,
+        .maxSegments = MAX_TEXT_SEGMENTS,
+        .linkEncoder = &encoder,
+        .linkSegmentCount = 0
+    };
+
+    // Run site-specific renderer
+    renderer(&ctx, document);
+
+    // Close JSON array
+    encoder.endArray(&encoder);
+    linksJson[jsonBufferPos] = '\0';
+
+    // Cleanup document
+    lxb_html_document_destroy(document);
+
+    // Calculate page height
+    int pageHeight = ctx.y + fontCache.fontHeight + 2 * pagePadding;
+    if (pageHeight < SCREEN_HEIGHT) {
+        pageHeight = SCREEN_HEIGHT;
+    }
+
+    // Create page image
+    LCDBitmap* pageImage = pd->graphics->newBitmap(pageWidth, pageHeight, kColorClear);
+    if (!pageImage) {
+        pd->lua->pushNil();
+        pd->lua->pushInt(SCREEN_HEIGHT);
+        pd->lua->pushString("[]");
+        return 3;
+    }
+
+    // Draw all text to page image
+    pd->graphics->pushContext(pageImage);
+    pd->graphics->setFont(fontCache.font);
+
+    for (int i = 0; i < ctx.segmentCount; i++) {
+        pd->graphics->drawText(allSegments[i].text, strlen(allSegments[i].text),
+                               kASCIIEncoding,
+                               pagePadding + allSegments[i].x,
+                               pagePadding + allSegments[i].y);
+    }
+
+    pd->graphics->popContext();
+
+    // Return page image, height, and links JSON to Lua
+    pd->lua->pushBitmap(pageImage);
+    pd->lua->pushInt(pageHeight);
+    pd->lua->pushString(linksJson);
+
+    return 3;
+}
+
+// Parse HTML and return JSON DOM tree (legacy, kept for compatibility)
 // Args: html (string)
 // Returns: json (string) or nil on error
 static int parseHTML(lua_State* L) {
@@ -562,6 +1252,10 @@ int eventHandler(PlaydateAPI* playdate, PDSystemEvent event, uint32_t arg) {
 
         if (!pd->lua->addFunction(parseHTML, "html.parse", &err)) {
             pd->system->logToConsole("Failed to register html.parse: %s", err);
+        }
+
+        if (!pd->lua->addFunction(renderHTML, "html.render", &err)) {
+            pd->system->logToConsole("Failed to register html.render: %s", err);
         }
 
         pd->system->logToConsole("cmark and html functions registered");

@@ -1,8 +1,6 @@
 import "CoreLibs/graphics"
 import "CoreLibs/sprites"
 import "CoreLibs/animation"
-import "htmlRenderer"
-import "siteparsers"
 
 local gfx = playdate.graphics
 local geo = playdate.geometry
@@ -431,13 +429,25 @@ function render(text, url)
 			table.insert(linkData, {url = data.url, segments = segments})
 		end
 	else
-		-- HTML path
-		local ir, err = siteparsers.parse(url, text)
-		if ir then
-			pageImage, pageHeight, linkData = htmlRenderer.render(ir, fnt, page.width, page.padding)
-		else
-			print("HTML parse error:", err)
+		-- HTML path: use html.render (C implementation)
+		local linksJson
+		pageImage, pageHeight, linksJson = html.render(
+			text, url, page.width, page.padding, fnt:getTracking())
+
+		if not pageImage then
+			print("HTML render failed for:", url)
 			return
+		end
+
+		-- Decode JSON links
+		linkData = {}
+		local jsonData = json.decode(linksJson) or {}
+		for _, data in ipairs(jsonData) do
+			local segments = {}
+			for _, seg in ipairs(data.segments) do
+				table.insert(segments, {x = seg[1], y = seg[2], w = seg[3]})
+			end
+			table.insert(linkData, {url = data.url, segments = segments})
 		end
 	end
 
