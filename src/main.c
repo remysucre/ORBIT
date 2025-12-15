@@ -328,6 +328,44 @@ static void renderNPRArticle(RenderContext* ctx, lxb_html_document_t* document) 
     lxb_dom_collection_destroy(collection, 1);
 }
 
+// Helper: recursively find element with data-field attribute
+static lxb_dom_node_t* findDataField(lxb_dom_node_t* node, const char* fieldValue) {
+    while (node) {
+        if (node->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+            lxb_dom_element_t* elem = lxb_dom_interface_element(node);
+            size_t attrLen;
+            const lxb_char_t* attr = lxb_dom_element_get_attribute(
+                elem, (const lxb_char_t*)"data-field", 10, &attrLen);
+            if (attr && strncmp((const char*)attr, fieldValue, attrLen) == 0) {
+                return node;
+            }
+            // Search children
+            lxb_dom_node_t* found = findDataField(node->first_child, fieldValue);
+            if (found) return found;
+        }
+        node = node->next;
+    }
+    return NULL;
+}
+
+// Helper: find first <a> element in subtree
+static lxb_dom_element_t* findAnchor(lxb_dom_node_t* node) {
+    while (node) {
+        if (node->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+            lxb_dom_element_t* elem = lxb_dom_interface_element(node);
+            const lxb_char_t* tagName = lxb_dom_element_local_name(elem, NULL);
+            if (tagName && tagName[0] == 'a' && tagName[1] == '\0') {
+                return elem;
+            }
+            // Search children
+            lxb_dom_element_t* found = findAnchor(node->first_child);
+            if (found) return found;
+        }
+        node = node->next;
+    }
+    return NULL;
+}
+
 // CSMonitor Frontpage: Render list of article links
 static void renderCSMonitorFrontpage(RenderContext* ctx, lxb_html_document_t* document) {
     // Title
@@ -335,74 +373,68 @@ static void renderCSMonitorFrontpage(RenderContext* ctx, lxb_html_document_t* do
     renderNewline(ctx);
     renderNewline(ctx);
 
-    // Find all <a> tags
+    // Find all <li> tags
     lxb_dom_collection_t* collection = lxb_dom_collection_make(
         &document->dom_document, 128);
 
     lxb_dom_elements_by_tag_name(
         lxb_dom_interface_element(document->body),
         collection,
-        (const lxb_char_t*)"a", 1);
+        (const lxb_char_t*)"li", 2);
 
     for (size_t i = 0; i < lxb_dom_collection_length(collection); i++) {
-        lxb_dom_element_t* element = lxb_dom_collection_element(collection, i);
+        lxb_dom_element_t* li = lxb_dom_collection_element(collection, i);
 
-        // Get href attribute
+        // Check for data-type="csm_article"
+        size_t attrLen;
+        const lxb_char_t* dataType = lxb_dom_element_get_attribute(
+            li, (const lxb_char_t*)"data-type", 9, &attrLen);
+
+        if (!dataType || strncmp((const char*)dataType, "csm_article", attrLen) != 0) {
+            continue;
+        }
+
+        // Find <a> element for the link
+        lxb_dom_element_t* anchor = findAnchor(lxb_dom_interface_node(li)->first_child);
+        if (!anchor) continue;
+
+        // Get href
         size_t hrefLen;
         const lxb_char_t* href = lxb_dom_element_get_attribute(
-            element, (const lxb_char_t*)"href", 4, &hrefLen);
-
+            anchor, (const lxb_char_t*)"href", 4, &hrefLen);
         if (!href || hrefLen == 0) continue;
 
-        // Filter: only links containing /text_edition/ and /20 (year pattern)
-        if (strstr((const char*)href, "/text_edition/") &&
-            strstr((const char*)href, "/20")) {
+        // Build full URL
+        char fullUrl[512];
+        if (href[0] == '/') {
+            snprintf(fullUrl, sizeof(fullUrl), "https://www.csmonitor.com%.*s", (int)hrefLen, href);
+        } else {
+            snprintf(fullUrl, sizeof(fullUrl), "%.*s", (int)hrefLen, href);
+        }
 
-            // Build full URL
-            char fullUrl[512];
-            if (href[0] == '/') {
-                snprintf(fullUrl, sizeof(fullUrl), "https://www.csmonitor.com%.*s", (int)hrefLen, href);
-            } else {
-                snprintf(fullUrl, sizeof(fullUrl), "%.*s", (int)hrefLen, href);
-            }
+        // Find title and summary within the anchor
+        char headline[512] = "";
+        char summary[512] = "";
 
-            // Look for title element with data-field="title"
-            char headline[512] = "";
-            char summary[512] = "";
+        lxb_dom_node_t* titleNode = findDataField(lxb_dom_interface_node(anchor)->first_child, "title");
+        if (titleNode) {
+            getNodeText(titleNode, headline, sizeof(headline));
+        }
 
-            // Search children for data-field attributes
-            lxb_dom_node_t* child = lxb_dom_interface_node(element)->first_child;
-            while (child) {
-                if (child->type == LXB_DOM_NODE_TYPE_ELEMENT) {
-                    lxb_dom_element_t* childElem = lxb_dom_interface_element(child);
-                    size_t attrLen;
-                    const lxb_char_t* dataField = lxb_dom_element_get_attribute(
-                        childElem, (const lxb_char_t*)"data-field", 10, &attrLen);
+        lxb_dom_node_t* summaryNode = findDataField(lxb_dom_interface_node(anchor)->first_child, "summary");
+        if (summaryNode) {
+            getNodeText(summaryNode, summary, sizeof(summary));
+        }
 
-                    if (dataField) {
-                        char text[512];
-                        getNodeText(child, text, sizeof(text));
-
-                        if (strncmp((const char*)dataField, "title", 5) == 0) {
-                            strncpy(headline, text, sizeof(headline) - 1);
-                        } else if (strncmp((const char*)dataField, "summary", 7) == 0) {
-                            strncpy(summary, text, sizeof(summary) - 1);
-                        }
-                    }
-                }
-                child = child->next;
-            }
-
-            // Render if headline found
-            if (headline[0]) {
-                renderLink(ctx, headline, fullUrl);
-                renderNewline(ctx);
-                if (summary[0]) {
-                    renderPlainText(ctx, summary);
-                    renderNewline(ctx);
-                }
+        // Render if headline found
+        if (headline[0]) {
+            renderLink(ctx, headline, fullUrl);
+            renderNewline(ctx);
+            if (summary[0]) {
+                renderPlainText(ctx, summary);
                 renderNewline(ctx);
             }
+            renderNewline(ctx);
         }
     }
 
