@@ -827,93 +827,6 @@ static int renderPage(lua_State* L) {
 // HTML Parsing Functions (lexbor)
 // ============================================================================
 
-#define MAX_JSON_SIZE 65536
-
-// Recursive function to serialize DOM node to JSON
-static void serializeNode(lxb_dom_node_t *node, json_encoder* enc, int* first) {
-    if (node == NULL) return;
-
-    while (node != NULL) {
-        if (node->type == LXB_DOM_NODE_TYPE_ELEMENT) {
-            lxb_dom_element_t *element = lxb_dom_interface_element(node);
-
-            // Get tag name
-            size_t tagLen;
-            const lxb_char_t *tagName = lxb_dom_element_qualified_name(element, &tagLen);
-
-            // Skip script and style tags entirely
-            if (tagName && tagLen > 0) {
-                if ((tagLen == 6 && strncasecmp((const char*)tagName, "script", 6) == 0) ||
-                    (tagLen == 5 && strncasecmp((const char*)tagName, "style", 5) == 0)) {
-                    node = node->next;
-                    continue;
-                }
-            }
-
-            enc->addArrayMember(enc);
-            enc->startTable(enc);
-
-            // Tag name (lowercase)
-            enc->addTableMember(enc, "tag", 3);
-            char lowerTag[64];
-            for (size_t i = 0; i < tagLen && i < 63; i++) {
-                char c = tagName[i];
-                lowerTag[i] = (c >= 'A' && c <= 'Z') ? c + 32 : c;
-            }
-            lowerTag[tagLen < 63 ? tagLen : 63] = '\0';
-            enc->writeString(enc, lowerTag, (int)strlen(lowerTag));
-
-            // Serialize attributes
-            lxb_dom_attr_t *attr = lxb_dom_element_first_attribute(element);
-            if (attr != NULL) {
-                enc->addTableMember(enc, "attrs", 5);
-                enc->startTable(enc);
-                while (attr != NULL) {
-                    size_t nameLen, valueLen;
-                    const lxb_char_t *attrName = lxb_dom_attr_qualified_name(attr, &nameLen);
-                    const lxb_char_t *attrValue = lxb_dom_attr_value(attr, &valueLen);
-
-                    if (attrName && nameLen > 0) {
-                        enc->addTableMember(enc, (const char*)attrName, (int)nameLen);
-                        enc->writeString(enc, attrValue ? (const char*)attrValue : "", attrValue ? (int)valueLen : 0);
-                    }
-
-                    attr = lxb_dom_element_next_attribute(attr);
-                }
-                enc->endTable(enc);
-            }
-
-            // Serialize children
-            if (node->first_child != NULL) {
-                enc->addTableMember(enc, "children", 8);
-                enc->startArray(enc);
-                int childFirst = 1;
-                serializeNode(node->first_child, enc, &childFirst);
-                enc->endArray(enc);
-            }
-
-            enc->endTable(enc);
-            *first = 0;
-
-        } else if (node->type == LXB_DOM_NODE_TYPE_TEXT) {
-            lxb_dom_character_data_t *char_data = lxb_dom_interface_character_data(node);
-            const lxb_char_t *textContent = char_data->data.data;
-            size_t textLen = char_data->data.length;
-
-            if (textContent && textLen > 0) {
-                enc->addArrayMember(enc);
-                enc->startTable(enc);
-                enc->addTableMember(enc, "text", 4);
-                enc->writeString(enc, (const char*)textContent, (int)textLen);
-                enc->endTable(enc);
-                *first = 0;
-            }
-        }
-
-        node = node->next;
-    }
-}
-
 // Render HTML page using site-specific renderer
 // Args: htmlString, url, pageWidth, pagePadding, tracking
 // Returns: pageImage, pageHeight, linksJSON
@@ -1045,74 +958,6 @@ static int renderHTML(lua_State* L) {
     return 3;
 }
 
-// Parse HTML and return JSON DOM tree (legacy, kept for compatibility)
-// Args: html (string)
-// Returns: json (string) or nil on error
-static int parseHTML(lua_State* L) {
-    (void)L;
-
-    const char* html = pd->lua->getArgString(1);
-    if (!html) {
-        pd->system->logToConsole("parseHTML: missing html argument");
-        pd->lua->pushNil();
-        return 1;
-    }
-
-    // Create HTML document
-    lxb_html_document_t *document = lxb_html_document_create();
-    if (document == NULL) {
-        pd->system->logToConsole("parseHTML: failed to create document");
-        pd->lua->pushNil();
-        return 1;
-    }
-
-    // Parse HTML
-    lxb_status_t status = lxb_html_document_parse(document,
-        (const lxb_char_t *)html, strlen(html));
-
-    if (status != LXB_STATUS_OK) {
-        pd->system->logToConsole("parseHTML: failed to parse HTML");
-        lxb_html_document_destroy(document);
-        pd->lua->pushNil();
-        return 1;
-    }
-
-    // Set up JSON encoder
-    static char json[MAX_JSON_SIZE];
-    jsonBuffer = json;
-    jsonBufferPos = 0;
-    jsonBufferSize = MAX_JSON_SIZE;
-
-    json_encoder enc;
-    pd->json->initEncoder(&enc, jsonWrite, NULL, 0);
-
-    // Start with root object containing the document
-    enc.startTable(&enc);
-    enc.addTableMember(&enc, "children", 8);
-    enc.startArray(&enc);
-
-    // Serialize the document body (or full document if no body)
-    lxb_dom_node_t *root = lxb_dom_interface_node(document);
-    int first = 1;
-    if (document->body != NULL) {
-        root = lxb_dom_interface_node(document->body);
-        serializeNode(root->first_child, &enc, &first);
-    } else if (root->first_child != NULL) {
-        serializeNode(root->first_child, &enc, &first);
-    }
-
-    enc.endArray(&enc);
-    enc.endTable(&enc);
-    json[jsonBufferPos] = '\0';
-
-    // Cleanup
-    lxb_html_document_destroy(document);
-
-    // Return JSON string
-    pd->lua->pushString(json);
-    return 1;
-}
-
 #ifdef _WINDLL
 __declspec(dllexport)
 #endif
@@ -1130,10 +975,6 @@ int eventHandler(PlaydateAPI* playdate, PDSystemEvent event, uint32_t arg) {
 
         if (!pd->lua->addFunction(renderPage, "cmark.render", &err)) {
             pd->system->logToConsole("Failed to register cmark.render: %s", err);
-        }
-
-        if (!pd->lua->addFunction(parseHTML, "html.parse", &err)) {
-            pd->system->logToConsole("Failed to register html.parse: %s", err);
         }
 
         if (!pd->lua->addFunction(renderHTML, "html.render", &err)) {
