@@ -208,7 +208,24 @@ SRC = src/main.c \
       lexbor/source/lexbor/html/tree/open_elements.c \
       lexbor/source/lexbor/html/tree/template_insertion.c \
       lexbor/source/lexbor/tag/tag.c \
-      lexbor/source/lexbor/ns/ns.c
+      lexbor/source/lexbor/ns/ns.c \
+      lexbor/source/lexbor/css/css.c \
+      lexbor/source/lexbor/css/log.c \
+      lexbor/source/lexbor/css/parser.c \
+      lexbor/source/lexbor/css/state.c \
+      lexbor/source/lexbor/css/syntax/syntax.c \
+      lexbor/source/lexbor/css/syntax/token.c \
+      lexbor/source/lexbor/css/syntax/tokenizer.c \
+      lexbor/source/lexbor/css/syntax/tokenizer/error.c \
+      lexbor/source/lexbor/css/syntax/state.c \
+      lexbor/source/lexbor/css/syntax/parser.c \
+      lexbor/source/lexbor/css/syntax/anb.c \
+      lexbor/source/lexbor/css/selectors/selectors.c \
+      lexbor/source/lexbor/css/selectors/selector.c \
+      lexbor/source/lexbor/css/selectors/state.c \
+      lexbor/source/lexbor/css/selectors/pseudo.c \
+      lexbor/source/lexbor/css/selectors/pseudo_state.c \
+      lexbor/source/lexbor/selectors/selectors.c
 
 # List all user directories here (src first for our cmark config headers)
 UINCDIR = src cmark/src lexbor/source

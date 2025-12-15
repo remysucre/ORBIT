@@ -355,141 +355,108 @@ static lxb_dom_element_t* findAnchor(lxb_dom_node_t* node) {
     return NULL;
 }
 
-// CSMonitor Frontpage: Render list of article links
+// Helper: recursively find element with class
+static lxb_dom_node_t* findNodeWithClass(lxb_dom_node_t* node, const char* className) {
+    while (node) {
+        if (node->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+            if (hasClass(lxb_dom_interface_element(node), className)) {
+                return node;
+            }
+            lxb_dom_node_t* found = findNodeWithClass(node->first_child, className);
+            if (found) return found;
+        }
+        node = node->next;
+    }
+    return NULL;
+}
+
+// CSMonitor Frontpage: Render each article item
+static lxb_status_t renderCSMArticleItem(lxb_dom_node_t* node, void* ctx) {
+    RenderContext* rctx = ctx;
+
+    lxb_dom_element_t* anchor = findAnchor(node->first_child);
+    if (!anchor) return LXB_STATUS_OK;
+
+    size_t hrefLen;
+    const lxb_char_t* href = lxb_dom_element_get_attribute(
+        anchor, (const lxb_char_t*)"href", 4, &hrefLen);
+    if (!href || hrefLen == 0) return LXB_STATUS_OK;
+
+    char fullUrl[512];
+    if (href[0] == '/') {
+        snprintf(fullUrl, sizeof(fullUrl), "https://www.csmonitor.com%.*s", (int)hrefLen, href);
+    } else {
+        snprintf(fullUrl, sizeof(fullUrl), "%.*s", (int)hrefLen, href);
+    }
+
+    char headline[512] = "";
+    char summary[512] = "";
+
+    lxb_dom_node_t* anchorNode = lxb_dom_interface_node(anchor);
+    lxb_dom_node_t* titleNode = findNodeWithClass(anchorNode->first_child, "content-title");
+    if (titleNode) {
+        getNodeText(titleNode, headline, sizeof(headline));
+    }
+
+    lxb_dom_node_t* summaryNode = findDataField(anchorNode->first_child, "summary");
+    if (summaryNode) {
+        getNodeText(summaryNode, summary, sizeof(summary));
+    }
+
+    if (headline[0]) {
+        renderLink(rctx, headline, fullUrl);
+        renderNewline(rctx);
+        if (summary[0]) {
+            renderPlainText(rctx, summary);
+            renderNewline(rctx);
+        }
+        renderNewline(rctx);
+    }
+    return LXB_STATUS_OK;
+}
+
 static void renderCSMonitorFrontpage(RenderContext* ctx, lxb_html_document_t* document) {
-    // Title
     renderPlainText(ctx, "Christian Science Monitor");
     renderNewline(ctx);
     renderNewline(ctx);
-
-    // Find all <li> tags
-    lxb_dom_collection_t* collection = lxb_dom_collection_make(
-        &document->dom_document, 128);
-
-    lxb_dom_elements_by_tag_name(
-        lxb_dom_interface_element(document->body),
-        collection,
-        (const lxb_char_t*)"li", 2);
-
-    for (size_t i = 0; i < lxb_dom_collection_length(collection); i++) {
-        lxb_dom_element_t* li = lxb_dom_collection_element(collection, i);
-
-        // Check for data-type="csm_article"
-        size_t attrLen;
-        const lxb_char_t* dataType = lxb_dom_element_get_attribute(
-            li, (const lxb_char_t*)"data-type", 9, &attrLen);
-
-        if (!dataType || strncmp((const char*)dataType, "csm_article", attrLen) != 0) {
-            continue;
-        }
-
-        // Find <a> element for the link
-        lxb_dom_element_t* anchor = findAnchor(lxb_dom_interface_node(li)->first_child);
-        if (!anchor) continue;
-
-        // Get href
-        size_t hrefLen;
-        const lxb_char_t* href = lxb_dom_element_get_attribute(
-            anchor, (const lxb_char_t*)"href", 4, &hrefLen);
-        if (!href || hrefLen == 0) continue;
-
-        // Build full URL
-        char fullUrl[512];
-        if (href[0] == '/') {
-            snprintf(fullUrl, sizeof(fullUrl), "https://www.csmonitor.com%.*s", (int)hrefLen, href);
-        } else {
-            snprintf(fullUrl, sizeof(fullUrl), "%.*s", (int)hrefLen, href);
-        }
-
-        // Find title and summary within the anchor
-        char headline[512] = "";
-        char summary[512] = "";
-
-        lxb_dom_node_t* titleNode = findDataField(lxb_dom_interface_node(anchor)->first_child, "title");
-        if (titleNode) {
-            getNodeText(titleNode, headline, sizeof(headline));
-        }
-
-        lxb_dom_node_t* summaryNode = findDataField(lxb_dom_interface_node(anchor)->first_child, "summary");
-        if (summaryNode) {
-            getNodeText(summaryNode, summary, sizeof(summary));
-        }
-
-        // Render if headline found
-        if (headline[0]) {
-            renderLink(ctx, headline, fullUrl);
-            renderNewline(ctx);
-            if (summary[0]) {
-                renderPlainText(ctx, summary);
-                renderNewline(ctx);
-            }
-            renderNewline(ctx);
-        }
-    }
-
-    lxb_dom_collection_destroy(collection, 1);
+    querySelectorAll(document, "li[data-type=csm_article]", renderCSMArticleItem, ctx);
 }
 
-// CSMonitor Article: Render article content
-static void renderCSMonitorArticle(RenderContext* ctx, lxb_html_document_t* document) {
-    lxb_dom_collection_t* collection = lxb_dom_collection_make(
-        &document->dom_document, 64);
+// CSMonitor Article: Render story header (title, summary, date, byline, location)
+static lxb_status_t renderCSMStoryHeader(lxb_dom_node_t* node, void* ctx) {
+    RenderContext* rctx = ctx;
 
-    // Find title (h1)
-    lxb_dom_elements_by_tag_name(
-        lxb_dom_interface_element(document->body),
-        collection,
-        (const lxb_char_t*)"h1", 2);
+    for (lxb_dom_node_t* child = node->first_child; child; child = child->next) {
+        if (child->type != LXB_DOM_NODE_TYPE_ELEMENT) continue;
 
-    if (lxb_dom_collection_length(collection) > 0) {
-        lxb_dom_element_t* h1 = lxb_dom_collection_element(collection, 0);
         char text[512];
-        getNodeText(lxb_dom_interface_node(h1), text, sizeof(text));
+        getNodeText(child, text, sizeof(text));
         if (text[0]) {
-            renderPlainText(ctx, text);
-            renderNewline(ctx);
-            renderNewline(ctx);
+            renderPlainText(rctx, text);
+            renderNewline(rctx);
+            renderNewline(rctx);
         }
     }
-    lxb_dom_collection_clean(collection);
+    return LXB_STATUS_OK;
+}
 
-    // Find time element for date
-    lxb_dom_elements_by_tag_name(
-        lxb_dom_interface_element(document->body),
-        collection,
-        (const lxb_char_t*)"time", 4);
+// CSMonitor Article: Render body content element
+static lxb_status_t renderCSMBodyElement(lxb_dom_node_t* node, void* ctx) {
+    RenderContext* rctx = ctx;
 
-    if (lxb_dom_collection_length(collection) > 0) {
-        lxb_dom_element_t* timeElem = lxb_dom_collection_element(collection, 0);
-        char text[256];
-        getNodeText(lxb_dom_interface_node(timeElem), text, sizeof(text));
-        if (text[0]) {
-            renderPlainText(ctx, text);
-            renderNewline(ctx);
-            renderNewline(ctx);
-        }
+    char text[2048];
+    getNodeText(node, text, sizeof(text));
+    if (text[0]) {
+        renderPlainText(rctx, text);
+        renderNewline(rctx);
+        renderNewline(rctx);
     }
-    lxb_dom_collection_clean(collection);
+    return LXB_STATUS_OK;
+}
 
-    // Find paragraphs
-    lxb_dom_elements_by_tag_name(
-        lxb_dom_interface_element(document->body),
-        collection,
-        (const lxb_char_t*)"p", 1);
-
-    for (size_t i = 0; i < lxb_dom_collection_length(collection); i++) {
-        lxb_dom_element_t* p = lxb_dom_collection_element(collection, i);
-        char text[2048];
-        getNodeText(lxb_dom_interface_node(p), text, sizeof(text));
-
-        if (text[0]) {
-            renderPlainText(ctx, text);
-            renderNewline(ctx);
-            renderNewline(ctx);
-        }
-    }
-
-    lxb_dom_collection_destroy(collection, 1);
+static void renderCSMonitorArticle(RenderContext* ctx, lxb_html_document_t* document) {
+    querySelectorAll(document, "div.comp-story-header", renderCSMStoryHeader, ctx);
+    querySelectorAll(document, "div[data-field=body] > *", renderCSMBodyElement, ctx);
 }
 
 // Site renderer function pointer type
