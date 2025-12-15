@@ -184,59 +184,6 @@ static void renderNewline(RenderContext* ctx) {
     ctx->y += fontCache.fontHeight;
 }
 
-// ============================================================================
-// Site-Specific HTML Renderers
-// ============================================================================
-
-// NPR Frontpage: Render list of article links
-static void renderNPRFrontpage(RenderContext* ctx, lxb_html_document_t* document) {
-    // Title
-    renderPlainText(ctx, "NPR News");
-    renderNewline(ctx);
-    renderNewline(ctx);
-
-    // Find all <a> tags and filter for article links
-    lxb_dom_collection_t* collection = lxb_dom_collection_make(
-        &document->dom_document, 128);
-
-    lxb_dom_elements_by_tag_name(
-        lxb_dom_interface_element(document->body),
-        collection,
-        (const lxb_char_t*)"a", 1);
-
-    for (size_t i = 0; i < lxb_dom_collection_length(collection); i++) {
-        lxb_dom_element_t* element = lxb_dom_collection_element(collection, i);
-
-        // Get href attribute
-        size_t hrefLen;
-        const lxb_char_t* href = lxb_dom_element_get_attribute(
-            element, (const lxb_char_t*)"href", 4, &hrefLen);
-
-        if (!href || hrefLen == 0) continue;
-
-        // Filter: only links starting with /g, /n, or /nx (article links)
-        if (href[0] == '/' && (href[1] == 'g' || href[1] == 'n' ||
-            (hrefLen > 2 && href[1] == 'n' && href[2] == 'x'))) {
-
-            // Extract link text
-            char text[512];
-            getNodeText(lxb_dom_interface_node(element), text, sizeof(text));
-
-            if (text[0]) {
-                // Build full URL
-                char fullUrl[256];
-                snprintf(fullUrl, sizeof(fullUrl), "https://text.npr.org%.*s", (int)hrefLen, href);
-
-                renderLink(ctx, text, fullUrl);
-                renderNewline(ctx);
-                renderNewline(ctx);
-            }
-        }
-    }
-
-    lxb_dom_collection_destroy(collection, 1);
-}
-
 // Check if element is inside a tag with given name
 static int isInsideTag(lxb_dom_node_t* node, const char* tagName, size_t tagLen) {
     lxb_dom_node_t* parent = node->parent;
@@ -265,67 +212,109 @@ static int hasClass(lxb_dom_element_t* element, const char* className) {
     return 0;
 }
 
-// NPR Article: Render article content
-static void renderNPRArticle(RenderContext* ctx, lxb_html_document_t* document) {
-    lxb_dom_collection_t* collection = lxb_dom_collection_make(
-        &document->dom_document, 64);
+// CSS selector query - calls callback for each matching element
+typedef lxb_status_t (*SelectorCallback)(lxb_dom_node_t* node, void* ctx);
 
-    // Find title (h1) - skip if inside <header>
-    lxb_dom_elements_by_tag_name(
-        lxb_dom_interface_element(document->body),
-        collection,
-        (const lxb_char_t*)"h1", 2);
+static lxb_status_t selectorFindCallback(lxb_dom_node_t *node,
+    lxb_css_selector_specificity_t spec, void *ctx) {
+    (void)spec;
+    void** args = ctx;
+    SelectorCallback cb = args[0];
+    return cb(node, args[1]);
+}
 
-    for (size_t i = 0; i < lxb_dom_collection_length(collection); i++) {
-        lxb_dom_element_t* h1 = lxb_dom_collection_element(collection, i);
-        // Skip h1 inside <header>
-        if (isInsideTag(lxb_dom_interface_node(h1), "header", 6)) {
-            continue;
-        }
+static void querySelectorAll(lxb_html_document_t* document, const char* selector,
+                             SelectorCallback callback, void* ctx) {
+    lxb_css_parser_t* parser = lxb_css_parser_create();
+    lxb_css_parser_init(parser, NULL);
+
+    lxb_selectors_t* selectors = lxb_selectors_create();
+    lxb_selectors_init(selectors);
+
+    lxb_css_selector_list_t* list = lxb_css_selectors_parse(parser,
+        (const lxb_char_t*)selector, strlen(selector));
+
+    if (parser->status == LXB_STATUS_OK) {
+        void* args[2] = { callback, ctx };
+        lxb_selectors_find(selectors, lxb_dom_interface_node(document),
+                           list, selectorFindCallback, args);
+    }
+
+    lxb_css_selector_list_destroy_memory(list);
+    lxb_selectors_destroy(selectors, true);
+    lxb_css_parser_destroy(parser, true);
+}
+
+// ============================================================================
+// Site-Specific HTML Renderers
+// ============================================================================
+
+// NPR Frontpage: Render each headline link
+static lxb_status_t renderNPRHeadline(lxb_dom_node_t* node, void* ctx) {
+    RenderContext* rctx = ctx;
+    lxb_dom_element_t* element = lxb_dom_interface_element(node);
+
+    size_t hrefLen;
+    const lxb_char_t* href = lxb_dom_element_get_attribute(
+        element, (const lxb_char_t*)"href", 4, &hrefLen);
+    if (!href || hrefLen == 0) return LXB_STATUS_OK;
+
+    char text[512];
+    getNodeText(node, text, sizeof(text));
+    if (!text[0]) return LXB_STATUS_OK;
+
+    char fullUrl[256];
+    snprintf(fullUrl, sizeof(fullUrl), "https://text.npr.org%.*s", (int)hrefLen, href);
+
+    renderLink(rctx, text, fullUrl);
+    renderNewline(rctx);
+    renderNewline(rctx);
+    return LXB_STATUS_OK;
+}
+
+static void renderNPRFrontpage(RenderContext* ctx, lxb_html_document_t* document) {
+    renderPlainText(ctx, "NPR News");
+    renderNewline(ctx);
+    renderNewline(ctx);
+    querySelectorAll(document, "a.topic-title", renderNPRHeadline, ctx);
+}
+
+// NPR Article: Render story header (title, author, date)
+static lxb_status_t renderNPRStoryHead(lxb_dom_node_t* node, void* ctx) {
+    RenderContext* rctx = ctx;
+
+    // Render children: h1.story-title, then <p> elements for author/date
+    for (lxb_dom_node_t* child = node->first_child; child; child = child->next) {
+        if (child->type != LXB_DOM_NODE_TYPE_ELEMENT) continue;
+
         char text[512];
-        getNodeText(lxb_dom_interface_node(h1), text, sizeof(text));
-        if (text[0]) {
-            renderPlainText(ctx, text);
-            renderNewline(ctx);
-            renderNewline(ctx);
-            break;  // Only render first non-header h1
-        }
+        getNodeText(child, text, sizeof(text));
+        if (!text[0]) continue;
+
+        renderPlainText(rctx, text);
+        renderNewline(rctx);
+        renderNewline(rctx);
     }
-    lxb_dom_collection_clean(collection);
+    return LXB_STATUS_OK;
+}
 
-    // Find paragraphs
-    lxb_dom_elements_by_tag_name(
-        lxb_dom_interface_element(document->body),
-        collection,
-        (const lxb_char_t*)"p", 1);
+// NPR Article: Render each content element
+static lxb_status_t renderNPRContentElement(lxb_dom_node_t* node, void* ctx) {
+    RenderContext* rctx = ctx;
 
-    for (size_t i = 0; i < lxb_dom_collection_length(collection); i++) {
-        lxb_dom_element_t* p = lxb_dom_collection_element(collection, i);
-
-        // Skip paragraphs inside <header>, <nav>, or <footer>
-        lxb_dom_node_t* pNode = lxb_dom_interface_node(p);
-        if (isInsideTag(pNode, "header", 6) ||
-            isInsideTag(pNode, "nav", 3) ||
-            isInsideTag(pNode, "footer", 6)) {
-            continue;
-        }
-
-        // Skip paragraphs with class="slug-line"
-        if (hasClass(p, "slug-line")) {
-            continue;
-        }
-
-        char text[2048];
-        getNodeText(lxb_dom_interface_node(p), text, sizeof(text));
-
-        if (text[0]) {
-            renderPlainText(ctx, text);
-            renderNewline(ctx);
-            renderNewline(ctx);
-        }
+    char text[2048];
+    getNodeText(node, text, sizeof(text));
+    if (text[0]) {
+        renderPlainText(rctx, text);
+        renderNewline(rctx);
+        renderNewline(rctx);
     }
+    return LXB_STATUS_OK;
+}
 
-    lxb_dom_collection_destroy(collection, 1);
+static void renderNPRArticle(RenderContext* ctx, lxb_html_document_t* document) {
+    querySelectorAll(document, "div.story-head", renderNPRStoryHead, ctx);
+    querySelectorAll(document, "div.paragraphs-container > *", renderNPRContentElement, ctx);
 }
 
 // Helper: recursively find element with data-field attribute
